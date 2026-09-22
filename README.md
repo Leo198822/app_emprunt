@@ -3,16 +3,32 @@
 Application [Streamlit](https://streamlit.io) qui reproduit l'échéancier bancaire d'un prêt débloqué en
 plusieurs fois et génère le fichier d'import **Pennylane** (même structure que `modeles/Echeancier_type.xlsx`).
 
-## Ce que fait l'application
+## Utilisation
 
-1. **Conditions de l'emprunt** : capital, taux, assurance et autres frais (en € ou en %).
-2. **Déblocages** : saisie des dates et montants, ou import direct du *grand livre* du compte 164 exporté
-   de Pennylane (les crédits deviennent les déblocages, les débits servent au calage et au contrôle).
-3. **Amortissement** : type de remboursement, périodicité, nombre d'échéances, échéances de différé
-   (intérêts capitalisés ou payés), jour de prélèvement, date du premier paiement.
-4. **Export** du fichier Pennylane rempli (en-tête lignes 1-2, échéances à partir de la ligne 6).
-5. **Contrôle** : si un grand livre est importé, le capital remboursé en comptabilité est comparé à
-   l'échéancier calculé.
+L'écran se remplit en trois étapes ; l'échéancier se génère dès que les informations obligatoires sont saisies.
+
+1. **Le prêt** (offre de prêt) : montant emprunté, taux, date de la 1re échéance, nombre total
+   d'échéances, dont échéances de différé, et — facultatif — le montant de l'échéance indiqué par la
+   banque. Si un différé est saisi : intérêts ajoutés au capital ou prélevés.
+2. **Les déblocages** : import du grand livre du compte 164 exporté de Pennylane (recommandé : les
+   remboursements comptabilisés servent aussi de contrôle), saisie manuelle, ou fonds versés en une fois.
+3. **Le tableau de la banque** (si les intérêts du différé sont ajoutés au capital) : recopier le
+   capital amorti et le capital restant dû d'une ligne de situation du tableau.
+
+Les options (assurance, frais, périodicité, type de remboursement, intérêts en jours exacts) sont
+regroupées dans un volet repliable. Le bouton **Télécharger l'échéancier Pennylane** produit le fichier
+d'import (même structure que `modeles/Echeancier_type.xlsx`, dates au format jj/mm/aaaa).
+
+### Exemple : prêt n°141
+
+| Champ | Valeur |
+|---|---|
+| Montant emprunté / taux | 24 000,00 € / 4,170 % |
+| Date de la 1re échéance | 05/01/2026 |
+| Échéance hors assurance | 468,45 € |
+| Nombre total d'échéances / dont différé | 60 / 3 (intérêts ajoutés au capital) |
+| Déblocages | grand livre `tests/grand_livre_exemple.xlsx` |
+| Capital amorti / capital restant dû | 2 326,56 € / 21 859,20 € |
 
 ## Règles de calcul
 

@@ -128,7 +128,10 @@ def interets_differe(p: ParametresPret, dates: list[date]) -> list[float]:
     Calcul en jours exacts sur une base de 365 jours : chaque déblocage porte intérêt du jour du
     versement (ou du début de la période) jusqu'à la date d'échéance.
     """
-    deblocages = sorted(p.deblocages, key=lambda d: d.date) or [Deblocage(p.date_premier_paiement, p.capital)]
+    # Sans déblocage saisi : fonds versés en totalité une période avant la première échéance.
+    deblocages = sorted(p.deblocages, key=lambda d: d.date) or [
+        Deblocage(ajouter_mois(dates[0], -p.mois_par_periode, p.jour_prelevement), p.capital)
+    ]
     r = p.taux / 100
     interets, debut = [], None
     for fin in dates[: p.nb_echeances_differe]:
