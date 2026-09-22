@@ -1,24 +1,38 @@
-# 🏠 Simulateur d'emprunt
+# 📅 Échéancier d'emprunt à déblocages multiples — format Pennylane
 
-Application web [Streamlit](https://streamlit.io) pour simuler un prêt immobilier ou à la consommation.
+Application [Streamlit](https://streamlit.io) qui reproduit l'échéancier bancaire d'un prêt débloqué en
+plusieurs fois et génère le fichier d'import **Pennylane** (même structure que `modeles/Echeancier_type.xlsx`).
 
-## Fonctionnalités
+## Ce que fait l'application
 
-- **Simulation de prêt** : mensualité (avec et sans assurance), coût des intérêts, coût de l'assurance, montant total remboursé.
-- **Graphiques** : répartition annuelle capital / intérêts / assurance et évolution du capital restant dû.
-- **Tableau d'amortissement** par mois ou par année, exportable en CSV (compatible Excel).
-- **Capacité d'emprunt** : montant empruntable selon les revenus, les crédits en cours et le taux d'endettement maximal.
+1. **Conditions de l'emprunt** : capital, taux, assurance et autres frais (en € ou en %).
+2. **Déblocages** : saisie des dates et montants, ou import direct du *grand livre* du compte 164 exporté
+   de Pennylane (les crédits deviennent les déblocages).
+3. **Amortissement** : type de remboursement, périodicité, nombre d'échéances, échéances de différé
+   (intérêts seuls), jour de prélèvement, date du premier paiement.
+4. **Export** du fichier Pennylane rempli (en-tête lignes 1-2, échéances à partir de la ligne 6).
+5. **Contrôle** : si un grand livre est importé, le capital remboursé en comptabilité est comparé à
+   l'échéancier calculé.
 
-## Lancer l'application en local
+## Règles de calcul
+
+- Le **capital amorti** suit le tableau théorique du capital total, quelles que soient les dates de
+  déblocage (c'est ce que montre le grand livre : les déblocages tardifs ne modifient pas l'amortissement).
+- Les **intérêts** portent sur le capital réellement débloqué et non remboursé : période pleine
+  (taux / 12) pour les fonds déjà débloqués, prorata des jours (base 365 ou 360) pour les fonds
+  débloqués en cours de période, et intérêts intercalaires depuis le déblocage pour la 1re échéance.
+- Le **solde** est le capital restant dû réel (fonds débloqués − capital remboursé).
+- Arrondis au centime ligne par ligne ; la dernière échéance absorbe l'écart (convention Pennylane).
+- Assurance et autres frais sont répartis également sur toutes les échéances.
+- Si l'échéance de l'offre de prêt diffère du calcul standard, saisissez-la dans **Réglages avancés** :
+  l'amortissement suit alors exactement celui de la banque.
+
+## Lancer en local
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate        # Windows : .venv\Scripts\activate
 pip install -r requirements.txt
 streamlit run app.py
 ```
-
-L'application s'ouvre sur http://localhost:8501.
 
 ## Tests
 
@@ -27,26 +41,10 @@ pip install pytest
 pytest
 ```
 
-## Mise en ligne sur Streamlit Community Cloud (gratuit)
+Les tests vérifient notamment que, sans déblocages multiples, l'application reproduit **à l'identique**
+le fichier type généré par Pennylane.
 
-1. Connectez-vous sur [share.streamlit.io](https://share.streamlit.io) avec votre compte GitHub.
-2. Cliquez sur **Create app** → **Deploy a public app from GitHub**.
-3. Renseignez :
-   - **Repository** : `leo198822/app_emprunt`
-   - **Branch** : `main` (ou la branche à publier)
-   - **Main file path** : `app.py`
-4. Cliquez sur **Deploy**. L'application reçoit une URL publique du type `https://<nom>.streamlit.app`.
+## Mise en ligne sur Streamlit Community Cloud
 
-À chaque `git push` sur la branche choisie, l'application en ligne est mise à jour automatiquement.
-
-## Structure
-
-```
-app.py              # Interface Streamlit
-emprunt.py          # Fonctions de calcul (mensualité, amortissement, capacité)
-tests/              # Tests unitaires (pytest)
-requirements.txt    # Dépendances installées par Streamlit Cloud
-.streamlit/         # Configuration du thème
-```
-
-> Simulation indicative, non contractuelle.
+Sur [share.streamlit.io](https://share.streamlit.io) → **Create app** : dépôt `Leo198822/app_emprunt`,
+branche de travail, fichier principal `app.py`. Chaque `git push` met l'application à jour.

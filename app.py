@@ -1,99 +1,184 @@
-"""Simulateur d'emprunt — application Streamlit."""
+"""Échéancier d'emprunt à déblocages multiples — export au format Pennylane."""
 
-import plotly.graph_objects as go
+from datetime import date
+
+import pandas as pd
 import streamlit as st
 
-from emprunt import Pret, capacite_emprunt, synthese, tableau_amortissement
+from echeancier import (
+    PERIODICITES,
+    Deblocage,
+    ParametresPret,
+    calculer_echeancier,
+    comparer,
+    echeancier_avec_deblocages,
+    exporter_pennylane,
+    lire_grand_livre,
+)
 
-st.set_page_config(page_title="Simulateur d'emprunt", page_icon="🏠", layout="wide")
+st.set_page_config(page_title="Échéancier Pennylane", page_icon="📅", layout="wide")
 
 
 def euros(valeur: float) -> str:
     return f"{valeur:,.2f} €".replace(",", " ").replace(".", ",")
 
 
-st.title("🏠 Simulateur d'emprunt")
+st.title("📅 Échéancier d'emprunt à déblocages multiples")
+st.caption("Reproduit l'échéancier bancaire et génère le fichier d'import Pennylane.")
 
-with st.sidebar:
-    st.header("Paramètres du prêt")
-    montant = st.number_input("Montant emprunté (€)", min_value=1_000, max_value=5_000_000, value=200_000, step=5_000)
-    taux = st.number_input("Taux nominal annuel (%)", min_value=0.0, max_value=20.0, value=3.5, step=0.05, format="%.2f")
-    duree = st.slider("Durée (années)", min_value=1, max_value=30, value=20)
-    taux_assurance = st.number_input(
-        "Taux d'assurance annuel (%)", min_value=0.0, max_value=2.0, value=0.30, step=0.01, format="%.2f"
-    )
+# --- Conditions de l'emprunt -----------------------------------------------------------
+st.header("Conditions de l'emprunt")
+c1, c2 = st.columns(2)
+capital = c1.number_input("Capital emprunté (€)", min_value=0.0, value=24_000.0, step=1_000.0, format="%.2f")
+taux = c2.number_input("Taux d'intérêt (%)", min_value=0.0, max_value=30.0, value=4.17, step=0.01, format="%.3f")
 
-onglet_simulation, onglet_capacite = st.tabs(["Simulation de prêt", "Capacité d'emprunt"])
+c1, c2 = st.columns(2)
+with c1:
+    a1, a2 = st.columns([3, 1])
+    assurance = a1.number_input("Assurance", min_value=0.0, value=0.0, step=0.01, format="%.2f")
+    unite_assurance = a2.selectbox("Unité", ["€", "%"], key="unite_assurance", help="€ : montant total — % : taux annuel sur le capital")
+with c2:
+    f1, f2 = st.columns([3, 1])
+    autres_frais = f1.number_input("Autres frais", min_value=0.0, value=0.0, step=0.01, format="%.2f")
+    unite_frais = f2.selectbox("Unité", ["€", "%"], key="unite_frais", help="€ : montant total — % : pourcentage du capital")
 
-# --- Simulation de prêt -------------------------------------------------------
-with onglet_simulation:
-    pret = Pret(montant=montant, taux_annuel=taux, duree_annees=duree, taux_assurance=taux_assurance)
-    resultats = synthese(pret)
-    tableau = tableau_amortissement(pret)
+# --- Déblocages ------------------------------------------------------------------------
+st.header("Déblocages des fonds")
+grand_livre = st.file_uploader(
+    "Importer le grand livre du compte d'emprunt (export Pennylane .xlsx) — facultatif",
+    type=["xlsx"],
+    help="Les crédits sont repris comme déblocages, les débits servent au contrôle du capital remboursé.",
+)
+remboursements = None
+if grand_livre is not None:
+    try:
+        deblocages_importes, remboursements = lire_grand_livre(grand_livre)
+        initial = pd.DataFrame([{"Date": d.date, "Montant (€)": d.montant} for d in deblocages_importes])
+        st.success(f"{len(deblocages_importes)} déblocage(s) et {len(remboursements)} remboursement(s) importés.")
+    except Exception as erreur:  # fichier inattendu : on reste sur la saisie manuelle
+        st.error(f"Lecture du grand livre impossible : {erreur}")
+        initial = pd.DataFrame([{"Date": date(2025, 12, 10), "Montant (€)": capital}])
+else:
+    initial = pd.DataFrame([{"Date": date(2025, 12, 10), "Montant (€)": capital}])
 
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Mensualité (assurance incluse)", euros(resultats["mensualite_totale"]))
-    col2.metric("Mensualité hors assurance", euros(resultats["mensualite_hors_assurance"]))
-    col3.metric("Coût total du crédit", euros(resultats["cout_total"]))
-    col4.metric("Montant total remboursé", euros(resultats["montant_total_rembourse"]))
+saisie = st.data_editor(
+    initial,
+    num_rows="dynamic",
+    width="stretch",
+    column_config={
+        "Date": st.column_config.DateColumn("Date de déblocage", format="DD/MM/YYYY", required=True),
+        "Montant (€)": st.column_config.NumberColumn("Montant (€)", min_value=0.0, format="%.2f", required=True),
+    },
+    key=f"deblocages_{grand_livre.name if grand_livre else 'manuel'}",
+)
+saisie = saisie.dropna()
+deblocages = [Deblocage(pd.Timestamp(r["Date"]).date(), float(r["Montant (€)"])) for _, r in saisie.iterrows()]
+total_debloque = round(sum(d.montant for d in deblocages), 2)
+if deblocages and abs(total_debloque - capital) > 0.005:
+    st.warning(f"Total des déblocages : {euros(total_debloque)} — différent du capital emprunté ({euros(capital)}).")
 
-    st.caption(
-        f"Dont intérêts : {euros(resultats['cout_interets'])} — "
-        f"dont assurance : {euros(resultats['cout_assurance'])}"
-    )
+# --- Amortissement ---------------------------------------------------------------------
+st.header("Amortissement")
+c1, c2 = st.columns(2)
+type_remboursement = c1.selectbox("Type de remboursement", ["Échéances constantes", "Amortissement constant"])
+periodicite = c2.selectbox("Périodicité", list(PERIODICITES))
 
-    par_annee = tableau.groupby("Année")[["Capital", "Intérêts", "Assurance"]].sum().reset_index()
-    restant_fin_annee = tableau.groupby("Année")["Capital restant dû"].last().reset_index()
+c1, c2 = st.columns(2)
+nb_echeances = c1.number_input("Nombre d'échéances (différé inclus)", min_value=1, max_value=600, value=60)
+nb_differe = c2.number_input(
+    "Dont échéances de différé (intérêts seuls)",
+    min_value=0,
+    max_value=int(nb_echeances) - 1,
+    value=0,
+    help="Échéances de préfinancement pendant lesquelles seuls les intérêts sont payés.",
+)
 
-    graph1, graph2 = st.columns(2)
-    with graph1:
-        st.subheader("Répartition annuelle des remboursements")
-        fig = go.Figure()
-        for colonne in ["Capital", "Intérêts", "Assurance"]:
-            fig.add_bar(x=par_annee["Année"], y=par_annee[colonne], name=colonne)
-        fig.update_layout(barmode="stack", xaxis_title="Année", yaxis_title="€", legend_orientation="h")
-        st.plotly_chart(fig, width="stretch")
-    with graph2:
-        st.subheader("Capital restant dû")
-        fig = go.Figure(go.Scatter(x=restant_fin_annee["Année"], y=restant_fin_annee["Capital restant dû"], fill="tozeroy"))
-        fig.update_layout(xaxis_title="Année", yaxis_title="€")
-        st.plotly_chart(fig, width="stretch")
+c1, c2 = st.columns(2)
+jour = c1.selectbox("Jour de prélèvement", list(range(1, 32)), index=9, format_func=lambda j: f"Le {j} du mois")
+premier_paiement = c2.date_input("Date du premier paiement", value=date(2026, 1, 5), format="DD/MM/YYYY")
 
-    st.subheader("Tableau d'amortissement")
-    vue = st.radio("Affichage", ["Par année", "Par mois"], horizontal=True)
-    if vue == "Par année":
-        affiche = par_annee.merge(restant_fin_annee, on="Année")
-    else:
-        affiche = tableau
-    colonnes_euros = [c for c in affiche.columns if c not in ("Mois", "Année")]
-    st.dataframe(
-        affiche.style.format({c: euros for c in colonnes_euros}),
-        width="stretch",
-        hide_index=True,
-    )
-    st.download_button(
-        "📥 Télécharger le tableau (CSV)",
-        data=tableau.round(2).to_csv(index=False, sep=";", decimal=",").encode("utf-8-sig"),
-        file_name="tableau_amortissement.csv",
-        mime="text/csv",
-    )
-
-# --- Capacité d'emprunt -------------------------------------------------------
-with onglet_capacite:
-    st.write("Estimez le montant que vous pouvez emprunter selon vos revenus et votre taux d'endettement.")
+with st.expander("Réglages avancés (pour coller exactement au tableau de la banque)"):
     c1, c2 = st.columns(2)
-    with c1:
-        revenus = st.number_input("Revenus nets mensuels du foyer (€)", min_value=0, value=4_000, step=100)
-        charges = st.number_input("Crédits en cours (mensualités, €)", min_value=0, value=0, step=50)
-        endettement = st.slider("Taux d'endettement maximal (%)", min_value=20, max_value=50, value=35)
-    with c2:
-        taux_cap = st.number_input("Taux nominal annuel (%)", min_value=0.0, max_value=20.0, value=3.5, step=0.05, format="%.2f", key="taux_cap")
-        duree_cap = st.slider("Durée (années)", min_value=1, max_value=30, value=20, key="duree_cap")
+    echeance_imposee = c1.number_input(
+        "Échéance hors assurance de l'offre de prêt (€)",
+        min_value=0.0,
+        value=0.0,
+        step=0.01,
+        format="%.2f",
+        help="Laisser à 0 pour la calculer. Si la banque indique une échéance différente, saisissez-la ici : "
+        "l'amortissement du capital suivra alors exactement celui de la banque.",
+    )
+    base_jours = c2.selectbox("Base de calcul des intérêts au prorata", [365, 360], help="Pour les fonds débloqués en cours de période.")
+    avec_lignes_deblocage = st.checkbox(
+        "Inclure les déblocages comme lignes de l'échéancier (amortissement négatif)",
+        help="Par défaut, seules les échéances figurent dans le fichier ; le solde tient compte des fonds débloqués.",
+    )
 
-    mensualite_max, capital_max = capacite_emprunt(revenus, charges, taux_cap, duree_cap, endettement)
-    m1, m2 = st.columns(2)
-    m1.metric("Mensualité maximale", euros(mensualite_max))
-    m2.metric("Capital empruntable (hors assurance)", euros(capital_max))
+params = ParametresPret(
+    capital=capital,
+    taux=taux,
+    nb_echeances=int(nb_echeances),
+    nb_echeances_differe=int(nb_differe),
+    date_premier_paiement=premier_paiement,
+    jour_prelevement=jour,
+    deblocages=deblocages,
+    periodicite=periodicite,
+    type_remboursement=type_remboursement,
+    echeance_imposee=echeance_imposee or None,
+    assurance=assurance,
+    assurance_en_pourcentage=unite_assurance == "%",
+    autres_frais=autres_frais,
+    autres_frais_en_pourcentage=unite_frais == "%",
+    base_jours=base_jours,
+)
 
-st.divider()
-st.caption("Simulation indicative, non contractuelle. Les conditions réelles dépendent de votre établissement prêteur.")
+if capital <= 0:
+    st.stop()
+
+echeancier = calculer_echeancier(params)
+export = echeancier_avec_deblocages(params, echeancier) if avec_lignes_deblocage else echeancier
+
+# --- Résultats -------------------------------------------------------------------------
+st.header("Échéancier")
+m1, m2, m3, m4 = st.columns(4)
+m1.metric("Échéance courante", euros(echeancier["Échéance (€)"].mode().iloc[0]))
+m2.metric("Total des intérêts", euros(echeancier["Intérêt (€)"].sum()))
+m3.metric("Capital amorti", euros(echeancier["Amortissement (€)"].sum()))
+m4.metric("Coût total", euros(echeancier[["Intérêt (€)", "Assurance (€)", "Autres frais (€)"]].sum().sum()))
+
+if (echeancier["Solde (€)"] < -0.005).any():
+    st.error("Le solde devient négatif : le capital amorti dépasse les fonds débloqués. Vérifiez les déblocages et le différé.")
+if abs(echeancier["Amortissement (€)"].sum() - capital) > 0.005:
+    st.warning("Le capital n'est pas entièrement amorti sur la durée : vérifiez l'échéance imposée.")
+
+affiche = export.copy()
+affiche["Date"] = pd.to_datetime(affiche["Date"]).dt.strftime("%d/%m/%Y")
+st.dataframe(
+    affiche.style.format({c: "{:,.2f}" for c in affiche.columns if c != "Date"}, na_rep=""),
+    width="stretch",
+    hide_index=True,
+    height=420,
+)
+
+st.download_button(
+    "📥 Télécharger l'échéancier Pennylane (.xlsx)",
+    data=exporter_pennylane(params, export),
+    file_name="Echeancier_pennylane.xlsx",
+    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    type="primary",
+)
+
+# --- Contrôle avec la comptabilité -----------------------------------------------------
+if remboursements is not None and not remboursements.empty:
+    st.header("Contrôle avec le grand livre")
+    controle = comparer(echeancier, remboursements)
+    ecart_max = controle["Écart (€)"].abs().max()
+    if ecart_max <= 0.02:
+        st.success("Le capital remboursé en comptabilité correspond à l'échéancier calculé.")
+    else:
+        st.warning(
+            f"Écart maximal de {euros(ecart_max)} sur le capital remboursé. Si l'écart est régulier, saisissez "
+            "l'échéance de l'offre de prêt dans « Réglages avancés »."
+        )
+    controle["Date"] = pd.to_datetime(controle["Date"]).dt.strftime("%d/%m/%Y")
+    st.dataframe(controle.style.format({c: "{:,.2f}" for c in controle.columns if c != "Date"}), hide_index=True)
