@@ -16,13 +16,24 @@ def euros(valeur: float) -> str:
     return f"{nombre(valeur)} €"
 
 
+def cle(nom: str) -> str:
+    """Clé de widget : change à chaque remise à zéro, ce qui recrée les champs vides."""
+    return f"{nom}_{st.session_state.get('reinitialisations', 0)}"
+
+
+def remettre_a_zero() -> None:
+    st.session_state["reinitialisations"] = st.session_state.get("reinitialisations", 0) + 1
+
+
 def tableau_euros(df: pd.DataFrame):
     affiche = df.copy()
     affiche["Date"] = pd.to_datetime(affiche["Date"]).dt.strftime("%d/%m/%Y")
     return affiche.style.format({c: nombre for c in affiche.columns if c != "Date"})
 
 
-st.title("📅 Échéancier d'emprunt pour Pennylane")
+titre, bouton = st.columns([4, 1], vertical_alignment="center")
+titre.title("📅 Échéancier d'emprunt pour Pennylane")
+bouton.button("🔄 Remettre à zéro", on_click=remettre_a_zero, help="Efface toutes les informations saisies.", width="stretch")
 st.write(
     "Renseignez les informations de votre **offre de prêt**, les **déblocages** et, si vous l'avez, le "
     "**tableau d'amortissement de la banque**. L'échéancier au format d'import Pennylane est généré en bas de page."
@@ -33,18 +44,18 @@ st.header("1. Le prêt", divider="gray")
 st.caption("Informations figurant sur l'offre de prêt.")
 
 c1, c2 = st.columns(2)
-capital = c1.number_input("Montant emprunté (€)", min_value=0.0, value=None, step=1_000.0, format="%.2f", placeholder="ex. 24 000,00")
-taux = c2.number_input("Taux nominal annuel (%)", min_value=0.0, max_value=30.0, value=None, step=0.01, format="%.3f", placeholder="ex. 4,170")
+capital = c1.number_input("Montant emprunté (€)", key=cle("capital"), min_value=0.0, value=None, step=1_000.0, format="%.2f", placeholder="ex. 24 000,00")
+taux = c2.number_input("Taux nominal annuel (%)", key=cle("taux"), min_value=0.0, max_value=30.0, value=None, step=0.01, format="%.3f", placeholder="ex. 4,170")
 
 c1, c2 = st.columns(2)
 premier_paiement = c1.date_input(
-    "Date de la 1re échéance",
+    "Date de la 1re échéance", key=cle("premier_paiement"),
     value=None,
     format="DD/MM/YYYY",
     help="Date du premier prélèvement, différé compris. Les échéances suivantes tombent le même jour du mois.",
 )
 echeance_banque = c2.number_input(
-    "Montant de l'échéance hors assurance (€)",
+    "Montant de l'échéance hors assurance (€)", key=cle("echeance_banque"),
     min_value=0.0,
     value=None,
     step=0.01,
@@ -54,9 +65,9 @@ echeance_banque = c2.number_input(
 )
 
 c1, c2 = st.columns(2)
-nb_echeances = c1.number_input("Nombre total d'échéances", min_value=1, max_value=600, value=None, placeholder="ex. 60", help="Différé compris.")
+nb_echeances = c1.number_input("Nombre total d'échéances", key=cle("nb_echeances"), min_value=1, max_value=600, value=None, placeholder="ex. 60", help="Différé compris.")
 nb_differe = c2.number_input(
-    "Dont échéances de différé",
+    "Dont échéances de différé", key=cle("nb_differe"),
     min_value=0,
     max_value=max(int(nb_echeances or 1) - 1, 0),
     value=0,
@@ -68,6 +79,7 @@ if nb_differe:
     interets_capitalises = st.radio(
         "Pendant le différé, les intérêts sont…",
         ["ajoutés au capital (rien n'est prélevé)", "prélevés à chaque échéance"],
+        key=cle("interets_capitalises"),
         horizontal=True,
     ).startswith("ajoutés")
 
@@ -76,12 +88,13 @@ st.header("2. Les déblocages", divider="gray")
 source = st.radio(
     "Comment renseigner les déblocages ?",
     ["Importer le grand livre du compte d'emprunt", "Saisir les déblocages", "Fonds versés en une fois"],
+    key=cle("source"),
     horizontal=True,
 )
 deblocages, remboursements = [], None
 if source.startswith("Importer"):
     grand_livre = st.file_uploader(
-        "Grand livre du compte 164 exporté de Pennylane (.xlsx)",
+        "Grand livre du compte 164 exporté de Pennylane (.xlsx)", key=cle("grand_livre"),
         type=["xlsx"],
         help="Les crédits sont repris comme déblocages ; les débits (capital remboursé) servent au contrôle.",
     )
@@ -98,7 +111,7 @@ if source.startswith("Importer"):
             st.error(f"Lecture du grand livre impossible : {erreur}")
 elif source.startswith("Saisir"):
     saisie = st.data_editor(
-        pd.DataFrame({"Date": pd.Series(dtype="datetime64[ns]"), "Montant (€)": pd.Series(dtype="float")}),
+        pd.DataFrame({"Date": pd.Series(dtype="datetime64[ns]"), "Montant (€)": pd.Series(dtype="float")}), key=cle("saisie"),
         num_rows="dynamic",
         width="stretch",
         column_config={
@@ -110,10 +123,15 @@ elif source.startswith("Saisir"):
 else:
     st.caption("Le capital est considéré comme versé en totalité un mois avant la 1re échéance.")
 
-if deblocages and capital:
+if deblocages:
     total = round(sum(d.montant for d in deblocages), 2)
-    if abs(total - capital) > 0.005:
-        st.warning(f"Total des déblocages : {euros(total)}, différent du montant emprunté ({euros(capital)}).")
+    libelle = f"**Total des déblocages : {euros(total)}** ({len(deblocages)} déblocage{'s' if len(deblocages) > 1 else ''})"
+    if not capital:
+        st.info(libelle)
+    elif abs(total - capital) <= 0.005:
+        st.success(f"{libelle} — égal au montant emprunté.")
+    else:
+        st.warning(f"{libelle} — écart de {euros(total - capital)} avec le montant emprunté ({euros(capital)}).")
 
 # --- Étape 3 : le tableau de la banque ---------------------------------------------------
 capital_depart = None
@@ -124,8 +142,8 @@ if nb_differe and interets_capitalises:
         "Recopiez une ligne de situation du tableau (ex. « 08/09/2026 — capital amorti 2 326,56 — capital restant dû 21 859,20 »)."
     )
     c1, c2 = st.columns(2)
-    deja_amorti = c1.number_input("Capital amorti (€)", min_value=0.0, value=None, step=0.01, format="%.2f", placeholder="ex. 2 326,56")
-    restant_du = c2.number_input("Capital restant dû (€)", min_value=0.0, value=None, step=0.01, format="%.2f", placeholder="ex. 21 859,20")
+    deja_amorti = c1.number_input("Capital amorti (€)", key=cle("deja_amorti"), min_value=0.0, value=None, step=0.01, format="%.2f", placeholder="ex. 2 326,56")
+    restant_du = c2.number_input("Capital restant dû (€)", key=cle("restant_du"), min_value=0.0, value=None, step=0.01, format="%.2f", placeholder="ex. 21 859,20")
     if restant_du:
         capital_depart = round(restant_du + (deja_amorti or 0), 2)
         st.caption(f"Capital à rembourser après le différé : **{euros(capital_depart)}**")
@@ -133,15 +151,17 @@ if nb_differe and interets_capitalises:
 # --- Options -----------------------------------------------------------------------------
 with st.expander("Options (assurance, frais, périodicité…)"):
     c1, c2 = st.columns(2)
-    periodicite = c1.selectbox("Périodicité", list(PERIODICITES))
-    type_remboursement = c2.selectbox("Type de remboursement", ["Échéances constantes", "Amortissement constant"])
+    periodicite = c1.selectbox("Périodicité", list(PERIODICITES), key=cle("periodicite"))
+    type_remboursement = c2.selectbox(
+        "Type de remboursement", ["Échéances constantes", "Amortissement constant"], key=cle("type_remboursement")
+    )
     c1, c2, c3, c4 = st.columns([3, 1, 3, 1])
-    assurance = c1.number_input("Assurance", min_value=0.0, value=0.0, step=0.01, format="%.2f")
-    unite_assurance = c2.selectbox("Unité", ["€", "%"], key="unite_assurance", help="€ : montant total — % : taux annuel sur le capital")
-    autres_frais = c3.number_input("Autres frais", min_value=0.0, value=0.0, step=0.01, format="%.2f")
-    unite_frais = c4.selectbox("Unité", ["€", "%"], key="unite_frais", help="€ : montant total — % : pourcentage du capital")
+    assurance = c1.number_input("Assurance", key=cle("assurance"), min_value=0.0, value=0.0, step=0.01, format="%.2f")
+    unite_assurance = c2.selectbox("Unité", ["€", "%"], key=cle("unite_assurance"), help="€ : montant total — % : taux annuel sur le capital")
+    autres_frais = c3.number_input("Autres frais", key=cle("autres_frais"), min_value=0.0, value=0.0, step=0.01, format="%.2f")
+    unite_frais = c4.selectbox("Unité", ["€", "%"], key=cle("unite_frais"), help="€ : montant total — % : pourcentage du capital")
     jours_exacts = st.checkbox(
-        "Calculer les intérêts d'amortissement en jours exacts / 365 (au lieu de taux / 12)",
+        "Calculer les intérêts d'amortissement en jours exacts / 365 (au lieu de taux / 12)", key=cle("jours_exacts"),
         help="Les banques appliquent en général taux / 12 aux échéances d'amortissement.",
     )
 
