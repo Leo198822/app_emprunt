@@ -105,4 +105,4 @@ def test_export_respecte_le_fichier_type(tmp_path):
         assert [c.value for c in ws[ligne]] == [c.value for c in modele[ligne]]
     assert [c.value for c in ws[2]] == [24_000, 4.17, 0, 0, 0, 0, 60]
     assert ws.max_row == 65
-    assert ws["A6"].number_format == modele["A6"].number_format
+    assert ws["A6"].number_format == "dd/mm/yyyy"

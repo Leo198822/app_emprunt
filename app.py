@@ -125,7 +125,6 @@ with st.expander("Réglages avancés (pour coller exactement au tableau de la ba
         disabled=not (nb_differe and interets_capitalises),
         help="Laisser à 0 pour les calculer (ou les déduire de l'échéance saisie).",
     )
-    base_jours = st.selectbox("Base de calcul des intérêts au prorata", [365, 360], help="Pour les fonds débloqués en cours de période.")
 
 params = ParametresPret(
     capital=capital,
@@ -145,7 +144,6 @@ params = ParametresPret(
     assurance_en_pourcentage=unite_assurance == "%",
     autres_frais=autres_frais,
     autres_frais_en_pourcentage=unite_frais == "%",
-    base_jours=base_jours,
 )
 
 if capital <= 0:

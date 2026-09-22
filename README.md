@@ -19,9 +19,8 @@ plusieurs fois et génère le fichier d'import **Pennylane** (même structure qu
 Règles déduites du grand livre d'un prêt Crédit Agricole à déblocages successifs (reproduit au centime) :
 
 - **Différé** : pendant les premières échéances, pas de remboursement de capital. Les intérêts courent
-  sur les fonds réellement débloqués — période pleine (taux / 12) pour les fonds déjà versés, prorata
-  des jours (base 365 ou 360) pour ceux versés en cours de période, intérêts intercalaires depuis le
-  déblocage pour la 1re échéance. Ils sont soit **capitalisés** (ajoutés au capital, rien n'est
+  sur les fonds réellement débloqués, en **jours exacts sur 365 jours**, du versement (ou de l'échéance
+  précédente) jusqu'à l'échéance. Ils sont soit **capitalisés** (ajoutés au capital, rien n'est
   prélevé), soit payés à chaque échéance.
 - **Amortissement** : à la fin du différé, le capital total + intérêts capitalisés est remboursé par
   échéances constantes, comme un prêt classique, même si des fonds sont encore débloqués ensuite.
@@ -30,6 +29,7 @@ Règles déduites du grand livre d'un prêt Crédit Agricole à déblocages succ
   Exemple du prêt n°141 : échéance 468,45 € → 185,69 € d'intérêts capitalisés, 24 185,69 € amortis.
 - Dans le fichier Pennylane, les intérêts capitalisés apparaissent en **amortissement négatif**
   (échéance à 0, le solde augmente), ce qui garde un solde cohérent depuis le capital de l'en-tête.
+- Dates au format français (jj/mm/aaaa) dans l'application et dans le fichier exporté.
 - Arrondis au centime ligne par ligne ; la dernière échéance solde le capital.
 - Assurance et autres frais sont répartis également sur toutes les échéances.
 

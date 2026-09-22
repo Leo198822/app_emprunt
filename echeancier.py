@@ -1,8 +1,8 @@
 """Calcul d'un échéancier d'emprunt à déblocages multiples, au format Pennylane.
 
 Principe (constaté sur le grand livre d'un prêt Crédit Agricole à déblocages successifs) :
-- pendant le **différé**, les intérêts courent sur les fonds réellement débloqués, au prorata
-  des jours ; ils sont soit payés à chaque échéance, soit **capitalisés** (ajoutés au capital) ;
+- pendant le **différé**, les intérêts courent sur les fonds réellement débloqués, en jours
+  exacts sur une base de 365 jours ; ils sont soit payés à chaque échéance, soit **capitalisés** (ajoutés au capital) ;
 - à la fin du différé, la banque amortit le capital total (+ intérêts capitalisés) par
   **échéances constantes**, comme un prêt classique, quelles que soient les dates des derniers déblocages.
 """
@@ -20,6 +20,8 @@ import pandas as pd
 
 MODELE_PENNYLANE = Path(__file__).parent / "modeles" / "Echeancier_type.xlsx"
 
+BASE_JOURS = 365  # intérêts du différé : jours exacts / 365
+FORMAT_DATE = "dd/mm/yyyy"  # dates au format français dans le fichier exporté
 PERIODICITES = {"Mensuelle": 1, "Trimestrielle": 3, "Semestrielle": 6, "Annuelle": 12}
 COLONNES = ["Date", "Intérêt (€)", "Assurance (€)", "Autres frais (€)", "Amortissement (€)", "Échéance (€)", "Solde (€)"]
 
@@ -49,7 +51,6 @@ class ParametresPret:
     assurance_en_pourcentage: bool = False  # True : taux annuel sur le capital ; False : montant total
     autres_frais: float = 0.0
     autres_frais_en_pourcentage: bool = False  # True : % du capital ; False : montant total
-    base_jours: int = 365  # base de calcul des intérêts au prorata des jours
 
     @property
     def mois_par_periode(self) -> int:
@@ -121,20 +122,18 @@ def repartir(total: float, n: int) -> list[float]:
 def interets_differe(p: ParametresPret, dates: list[date]) -> list[float]:
     """Intérêts de chaque échéance de différé, sur les fonds réellement débloqués.
 
-    Période pleine (taux périodique) pour les fonds débloqués avant la période, prorata des jours
-    pour ceux débloqués pendant la période, et intérêts intercalaires depuis le déblocage pour la
-    première échéance.
+    Calcul en jours exacts sur une base de 365 jours : chaque déblocage porte intérêt du jour du
+    versement (ou du début de la période) jusqu'à la date d'échéance.
     """
     deblocages = sorted(p.deblocages, key=lambda d: d.date) or [Deblocage(p.date_premier_paiement, p.capital)]
-    r, t = p.taux / 100, p.taux_periodique
-    interets, debut = [], ajouter_mois(dates[0], -p.mois_par_periode, p.jour_prelevement)
-    for k, fin in enumerate(dates[: p.nb_echeances_differe]):
-        interet = sum(d.montant for d in deblocages if d.date <= debut) * t
+    r = p.taux / 100
+    interets, debut = [], None
+    for fin in dates[: p.nb_echeances_differe]:
+        interet = 0.0
         for d in deblocages:
-            if debut < d.date <= fin:
-                interet += d.montant * r * (fin - d.date).days / p.base_jours
-            elif k == 0 and d.date < debut:
-                interet += d.montant * r * (debut - d.date).days / p.base_jours
+            if d.date < fin:
+                depart = d.date if debut is None else max(d.date, debut)
+                interet += d.montant * r * (fin - depart).days / BASE_JOURS
         interets.append(round(interet, 2))
         debut = fin
     return interets
@@ -242,7 +241,6 @@ def exporter_pennylane(p: ParametresPret, echeancier: pd.DataFrame) -> bytes:
     wb = openpyxl.load_workbook(MODELE_PENNYLANE)
     ws = wb.active
     format_nombre = ws["A2"].number_format
-    format_date = ws["A6"].number_format
     style_ligne = [ws.cell(row=6, column=c)._style for c in range(1, 8)]
     ws.delete_rows(6, ws.max_row)
 
@@ -262,7 +260,7 @@ def exporter_pennylane(p: ParametresPret, echeancier: pd.DataFrame) -> bytes:
         for c, valeur in enumerate(ligne, start=1):
             cellule = ws.cell(row=i, column=c, value=valeur)
             cellule._style = style_ligne[c - 1]
-            cellule.number_format = format_date if c == 1 else format_nombre
+            cellule.number_format = FORMAT_DATE if c == 1 else format_nombre
 
     sortie = BytesIO()
     wb.save(sortie)
