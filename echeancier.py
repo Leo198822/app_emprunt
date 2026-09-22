@@ -1,8 +1,8 @@
 """Calcul d'un échéancier d'emprunt à déblocages multiples, au format Pennylane.
 
 Principe (constaté sur le grand livre d'un prêt Crédit Agricole à déblocages successifs) :
-- pendant le **différé**, les intérêts courent sur les fonds réellement débloqués, en jours
-  exacts sur une base de 365 jours ; ils sont soit payés à chaque échéance, soit **capitalisés** (ajoutés au capital) ;
+- pendant le **différé**, les intérêts courent sur les fonds réellement débloqués : période pleine
+  (taux / 12) pour les fonds déjà versés, jours exacts / 365 pour ceux versés en cours de période ; ils sont soit payés à chaque échéance, soit **capitalisés** (ajoutés au capital) ;
 - à la fin du différé, la banque amortit le capital total (+ intérêts capitalisés) par
   **échéances constantes**, comme un prêt classique, quelles que soient les dates des derniers déblocages ;
 - pendant l'amortissement, les intérêts sont calculés à taux / 12 sur le capital restant dû
@@ -22,7 +22,7 @@ import pandas as pd
 
 MODELE_PENNYLANE = Path(__file__).parent / "modeles" / "Echeancier_type.xlsx"
 
-BASE_JOURS = 365  # intérêts : jours exacts / 365
+BASE_JOURS = 365  # prorata des jours : base 365
 FORMAT_DATE = "dd/mm/yyyy"  # dates au format français dans le fichier exporté
 PERIODICITES = {"Mensuelle": 1, "Trimestrielle": 3, "Semestrielle": 6, "Annuelle": 12}
 COLONNES = ["Date", "Intérêt (€)", "Assurance (€)", "Autres frais (€)", "Amortissement (€)", "Échéance (€)", "Solde (€)"]
@@ -125,24 +125,37 @@ def repartir(total: float, n: int) -> list[float]:
 def interets_differe(p: ParametresPret, dates: list[date]) -> list[float]:
     """Intérêts de chaque échéance de différé, sur les fonds réellement débloqués.
 
-    Calcul en jours exacts sur une base de 365 jours : chaque déblocage porte intérêt du jour du
-    versement (ou du début de la période) jusqu'à la date d'échéance.
+    Méthode bancaire usuelle : les fonds versés avant le début de la période portent intérêt sur une
+    période pleine (taux / 12) ; ceux versés pendant la période, au prorata des jours exacts / 365
+    jusqu'à l'échéance. Pour la 1re échéance, les intérêts courent depuis la date de chaque déblocage.
     """
     # Sans déblocage saisi : fonds versés en totalité une période avant la première échéance.
     deblocages = sorted(p.deblocages, key=lambda d: d.date) or [
         Deblocage(ajouter_mois(dates[0], -p.mois_par_periode, p.jour_prelevement), p.capital)
     ]
-    r = p.taux / 100
+    r, t = p.taux / 100, p.taux_periodique
     interets, debut = [], None
     for fin in dates[: p.nb_echeances_differe]:
         interet = 0.0
         for d in deblocages:
-            if d.date < fin:
-                depart = d.date if debut is None else max(d.date, debut)
-                interet += d.montant * r * (fin - depart).days / BASE_JOURS
+            if d.date >= fin:
+                continue
+            if debut is not None and d.date <= debut:
+                interet += d.montant * t
+            else:
+                interet += d.montant * r * (fin - d.date).days / BASE_JOURS
         interets.append(round(interet, 2))
         debut = fin
     return interets
+
+
+def repartir_ecart(montants: list[float], total: float) -> list[float]:
+    """Ajuste des montants au prorata pour atteindre un total ; la dernière ligne absorbe l'arrondi."""
+    somme = sum(montants)
+    if not montants or somme == 0:
+        return repartir(total, len(montants))
+    ajustes = [round(m * total / somme, 2) for m in montants[:-1]]
+    return ajustes + [round(total - sum(ajustes), 2)]
 
 
 def facteurs_interets(p: ParametresPret, dates: list[date]) -> list[float]:
@@ -229,9 +242,9 @@ def calculer(p: ParametresPret) -> Resultat:
             echeance = echeance_pour(base, t, n)
         lignes_amort = tableau_constant(base, echeance, facteurs)
 
-    if p.interets_differe_capitalises and interets:
-        # L'écart entre intérêts retenus et calculés est porté sur la dernière échéance de différé.
-        interets[-1] = round(interets[-1] + capitalises - calcules, 2)
+    if p.interets_differe_capitalises and interets and capitalises != calcules:
+        # Total imposé par la banque : l'écart est réparti au prorata des intérêts de chaque mois.
+        interets = repartir_ecart(interets, capitalises)
 
     assurances = repartir(p.montant_total_assurance, p.nb_echeances)
     frais = repartir(p.montant_total_autres_frais, p.nb_echeances)

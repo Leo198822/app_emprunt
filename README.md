@@ -35,8 +35,10 @@ d'import (même structure que `modeles/Echeancier_type.xlsx`, dates au format jj
 Règles déduites du grand livre d'un prêt Crédit Agricole à déblocages successifs (reproduit au centime) :
 
 - **Différé** : pendant les premières échéances, pas de remboursement de capital. Les intérêts courent
-  sur les fonds réellement débloqués, en **jours exacts sur 365 jours**, du versement (ou de l'échéance
-  précédente) jusqu'à l'échéance. Ils sont soit **capitalisés** (ajoutés au capital, rien n'est
+  sur les fonds réellement débloqués : **période pleine (taux / 12)** pour les fonds déjà versés au
+  début de la période, **jours exacts / 365** du versement à l'échéance pour ceux versés en cours de
+  période. Si le capital de départ du tableau bancaire est saisi, le total est calé dessus et l'écart
+  est réparti au prorata de chaque mois. Ils sont soit **capitalisés** (ajoutés au capital, rien n'est
   prélevé), soit payés à chaque échéance.
 - **Amortissement** : à la fin du différé, le capital total + intérêts capitalisés est remboursé par
   échéances constantes, comme un prêt classique, même si des fonds sont encore débloqués ensuite.
