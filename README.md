@@ -24,13 +24,14 @@ Règles déduites du grand livre d'un prêt Crédit Agricole à déblocages succ
   prélevé), soit payés à chaque échéance.
 - **Amortissement** : à la fin du différé, le capital total + intérêts capitalisés est remboursé par
   échéances constantes, comme un prêt classique, même si des fonds sont encore débloqués ensuite.
-  Les intérêts de chaque échéance sont calculés en **jours exacts sur 365 jours** (capital restant dû ×
-  taux × nombre de jours depuis l'échéance précédente / 365) ; l'amortissement du capital varie donc
-  légèrement selon la longueur des mois et la dernière échéance absorbe l'écart. Une option
-  (réglages avancés) applique à la place taux / 12, comme le tableau Pennylane.
-- **Échéance de l'offre de prêt** (réglages avancés) : si elle est saisie, le capital à amortir en est
-  déduit ; si le grand livre est importé, il est calé pour reproduire exactement le capital remboursé.
-  Exemple du prêt n°141 : échéance 468,45 € → 185,69 € d'intérêts capitalisés, 24 185,69 € amortis.
+  Les intérêts de chaque échéance valent capital restant dû × taux / 12, comme sur le tableau
+  bancaire. Une option (réglages avancés) calcule à la place en jours exacts / 365.
+- **Réglages avancés** pour coller au tableau de la banque :
+  - *Échéance de l'offre de prêt* : fixe l'échéance constante ;
+  - *Capital à amortir en fin de différé* : capital restant dû + capital déjà amorti lus sur le
+    tableau bancaire. À défaut, il est déduit de l'échéance et calé sur le grand livre importé.
+  - Exemple du prêt n°141 : échéance 468,45 €, capital 24 185,76 € (21 859,20 + 2 326,56) →
+    tableau bancaire reproduit au centime.
 - Dans le fichier Pennylane, les intérêts capitalisés apparaissent en **amortissement négatif**
   (échéance à 0, le solde augmente), ce qui garde un solde cohérent depuis le capital de l'en-tête.
 - Dates au format français (jj/mm/aaaa) dans l'application et dans le fichier exporté.

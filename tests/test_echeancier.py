@@ -26,7 +26,6 @@ def pret_simple():
         date_premier_paiement=date(2026, 1, 5),
         jour_prelevement=10,
         deblocages=[Deblocage(date(2025, 12, 10), 24_000)],
-        interets_jours_exacts=False,
     )
 
 
@@ -85,25 +84,52 @@ def test_differe_paye():
     assert e["Amortissement (€)"].sum() == pytest.approx(24_000)
 
 
-def test_interets_en_jours_exacts():
-    """Par défaut, les intérêts d'amortissement suivent le nombre de jours de chaque mois (base 365)."""
-    e = calculer_echeancier(pret_banque(468.45))
+# Extrait du tableau d'amortissement bancaire du prêt n°141 : rang -> (intérêts, capital amorti, CRD).
+TABLEAU_BANQUE = {
+    10: (75.96, 392.49, 21_466.71),
+    11: (74.60, 393.85, 21_072.86),
+    16: (67.71, 400.74, 19_082.97),
+    20: (62.11, 406.34, 17_466.02),
+    30: (47.76, 420.69, 13_324.11),
+    40: (32.91, 435.54, 9_035.98),
+    50: (17.54, 450.91, 4_596.50),
+    55: (9.65, 458.80, 2_318.33),
+    58: (4.85, 463.60, 932.35),
+    59: (3.24, 465.21, 467.14),
+}
+
+
+def test_reproduit_le_tableau_bancaire():
+    """Échéance 468,45 € et capital de départ 24 185,76 € (21 859,20 + 2 326,56) : tableau au centime."""
+    p = pret_banque(468.45)
+    p.interets_capitalises_imposes = 185.76
+    e = calculer_echeancier(p)
+    assert e["Solde (€)"].iloc[8] == pytest.approx(21_859.20)
+    assert e["Amortissement (€)"].iloc[3:9].sum() == pytest.approx(2_326.56)
+    for rang, attendu in TABLEAU_BANQUE.items():
+        ligne = e.iloc[rang - 1]
+        assert (ligne["Intérêt (€)"], ligne["Amortissement (€)"], ligne["Solde (€)"]) == pytest.approx(attendu, abs=0.001)
+    assert e["Solde (€)"].iloc[-1] == pytest.approx(0)
+    _, remboursements = lire_grand_livre(GRAND_LIVRE)
+    assert comparer(e, remboursements)["Écart (€)"].abs().max() == 0
+
+
+def test_calage_sur_le_grand_livre():
+    """Sans le tableau bancaire : capital déduit de l'échéance et des remboursements comptabilisés."""
+    _, remboursements = lire_grand_livre(GRAND_LIVRE)
+    r = calculer(pret_banque(468.45, remboursements["Capital remboursé (€)"]))
+    assert comparer(r.echeancier, remboursements)["Écart (€)"].abs().max() == 0
+    assert set(r.echeancier["Échéance (€)"].iloc[3:-1]) == {468.45}
+    assert abs(r.capital_amorti - 24_185.76) < 0.2
+
+
+def test_option_jours_exacts():
+    p = pret_banque(468.45)
+    p.interets_jours_exacts = True
+    e = calculer_echeancier(p)
     avril, mai = e.iloc[3], e.iloc[4]  # 05/03 → 05/04 : 31 jours ; 05/04 → 05/05 : 30 jours
     assert avril["Intérêt (€)"] == pytest.approx(e["Solde (€)"].iloc[2] * 0.0417 * 31 / 365, abs=0.01)
     assert mai["Intérêt (€)"] == pytest.approx(avril["Solde (€)"] * 0.0417 * 30 / 365, abs=0.01)
-    assert e["Solde (€)"].iloc[-1] == pytest.approx(0)
-
-
-def test_taux_mensuel_reproduit_le_grand_livre():
-    """Avec l'option taux / 12 et l'échéance de l'offre (468,45 €) : écart nul au centime."""
-    _, remboursements = lire_grand_livre(GRAND_LIVRE)
-    p = pret_banque(468.45, remboursements["Capital remboursé (€)"])
-    p.interets_jours_exacts = False
-    r = calculer(p)
-    assert comparer(r.echeancier, remboursements)["Écart (€)"].abs().max() == 0
-    assert set(r.echeancier["Échéance (€)"].iloc[3:-1]) == {468.45}
-    assert r.echeancier["Solde (€)"].iloc[-1] == pytest.approx(0)
-    assert 185 < r.interets_capitalises_retenus < 186
 
 
 def test_export_respecte_le_fichier_type(tmp_path):

@@ -116,19 +116,19 @@ with st.expander("Réglages avancés (pour coller exactement au tableau de la ba
         help="Laisser à 0 pour la calculer. Si elle est saisie, le capital à amortir (et donc les intérêts "
         "capitalisés) est déduit de cette échéance, et calé sur le grand livre s'il a été importé.",
     )
-    interets_capitalises_imposes = c2.number_input(
-        "Intérêts capitalisés du tableau bancaire (€)",
+    capital_depart = c2.number_input(
+        "Capital à amortir en fin de différé (€)",
         min_value=0.0,
         value=0.0,
         step=0.01,
         format="%.2f",
         disabled=not (nb_differe and interets_capitalises),
-        help="Laisser à 0 pour les calculer (ou les déduire de l'échéance saisie).",
+        help="Sur le tableau de la banque : capital restant dû + capital déjà amorti "
+        "(ex. 21 859,20 + 2 326,56 = 24 185,76). Laisser à 0 pour le calculer.",
     )
-    taux_mensuel = st.checkbox(
-        "Intérêts d'amortissement au taux mensuel (taux / 12) au lieu des jours exacts / 365",
-        help="Par défaut, tous les intérêts sont calculés en jours exacts sur 365 jours. "
-        "Cochez pour appliquer taux / 12 à chaque échéance d'amortissement, comme le tableau Pennylane.",
+    jours_exacts = st.checkbox(
+        "Intérêts d'amortissement en jours exacts / 365 (au lieu de taux / 12)",
+        help="La banque calcule à taux / 12 : ne cocher que si votre tableau bancaire le justifie.",
     )
 
 params = ParametresPret(
@@ -142,8 +142,8 @@ params = ParametresPret(
     periodicite=periodicite,
     type_remboursement=type_remboursement,
     interets_differe_capitalises=interets_capitalises,
-    interets_jours_exacts=not taux_mensuel,
-    interets_capitalises_imposes=interets_capitalises_imposes or None,
+    interets_jours_exacts=jours_exacts,
+    interets_capitalises_imposes=round(capital_depart - capital, 2) if capital_depart else None,
     echeance_imposee=echeance_imposee or None,
     remboursements_constates=[] if remboursements is None else remboursements["Capital remboursé (€)"].tolist(),
     assurance=assurance,

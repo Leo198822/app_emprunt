@@ -5,8 +5,8 @@ Principe (constaté sur le grand livre d'un prêt Crédit Agricole à déblocage
   exacts sur une base de 365 jours ; ils sont soit payés à chaque échéance, soit **capitalisés** (ajoutés au capital) ;
 - à la fin du différé, la banque amortit le capital total (+ intérêts capitalisés) par
   **échéances constantes**, comme un prêt classique, quelles que soient les dates des derniers déblocages ;
-- tous les intérêts sont calculés en jours exacts sur une base de 365 jours ; l'échéance constante
-  reste celle de la formule classique et la dernière échéance absorbe l'écart.
+- pendant l'amortissement, les intérêts sont calculés à taux / 12 sur le capital restant dû
+  (vérifié au centime sur le tableau bancaire) ; une option permet les jours exacts / 365.
 """
 
 from __future__ import annotations
@@ -49,7 +49,7 @@ class ParametresPret:
     type_remboursement: str = "Échéances constantes"  # ou "Amortissement constant"
     echeance_imposee: float | None = None  # échéance hors assurance de l'offre bancaire, si connue
     remboursements_constates: list[float] = field(default_factory=list)  # capital remboursé (grand livre)
-    interets_jours_exacts: bool = True  # jours exacts / 365 ; False : taux / 12 comme Pennylane
+    interets_jours_exacts: bool = False  # amortissement : taux / 12 (banque) ; True : jours exacts / 365
     assurance: float = 0.0
     assurance_en_pourcentage: bool = False  # True : taux annuel sur le capital ; False : montant total
     autres_frais: float = 0.0
@@ -143,7 +143,7 @@ def interets_differe(p: ParametresPret, dates: list[date]) -> list[float]:
 
 
 def facteurs_interets(p: ParametresPret, dates: list[date]) -> list[float]:
-    """Taux d'intérêt de chaque période d'amortissement : jours exacts / 365 (ou taux périodique)."""
+    """Taux d'intérêt de chaque période d'amortissement : taux périodique (ou jours exacts / 365)."""
     if not p.interets_jours_exacts:
         return [p.taux_periodique] * p.nb_echeances_amortissement
     r, k0 = p.taux / 100, p.nb_echeances_differe
@@ -189,7 +189,6 @@ def calibrer_base(echeance: float, t: float, facteurs: list[float], constates: l
         c / 100
         for c in range(round(base * 100) - 1000, round(base * 100) + 1000)
         if [a for _, a in tableau_constant(c / 100, echeance, facteurs)[: len(constates)]] == constates
-        and echeance_pour(c / 100, t, n) == echeance
     ]
     return compatibles[len(compatibles) // 2] if compatibles else base
 
