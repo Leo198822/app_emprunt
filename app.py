@@ -3,7 +3,16 @@
 import pandas as pd
 import streamlit as st
 
-from echeancier import PERIODICITES, Deblocage, ParametresPret, calculer, comparer, exporter_pennylane, lire_grand_livre
+from echeancier import (
+    PERIODICITES,
+    Deblocage,
+    ParametresPret,
+    ajuster_sur_solde,
+    calculer,
+    comparer,
+    exporter_pennylane,
+    lire_grand_livre,
+)
 
 st.set_page_config(page_title="Échéancier Pennylane", page_icon="📅", layout="centered")
 
@@ -35,8 +44,8 @@ titre, bouton = st.columns([4, 1], vertical_alignment="center")
 titre.title("📅 Échéancier d'emprunt pour Pennylane")
 bouton.button("🔄 Remettre à zéro", on_click=remettre_a_zero, help="Efface toutes les informations saisies.", width="stretch")
 st.write(
-    "Renseignez les informations de votre **offre de prêt**, les **déblocages** et, si vous l'avez, le "
-    "**tableau d'amortissement de la banque**. L'échéancier au format d'import Pennylane est généré en bas de page."
+    "Renseignez les informations de votre **offre de prêt** et les **déblocages** : l'échéancier au format "
+    "d'import Pennylane est généré en bas de page. Vous pourrez ensuite le caler sur un capital restant dû connu."
 )
 
 # --- Étape 1 : le prêt -------------------------------------------------------------------
@@ -133,21 +142,6 @@ if deblocages:
     else:
         st.warning(f"{libelle} — écart de {euros(total - capital)} avec le montant emprunté ({euros(capital)}).")
 
-# --- Étape 3 : le tableau de la banque ---------------------------------------------------
-capital_depart = None
-if nb_differe and interets_capitalises:
-    st.header("3. Le tableau d'amortissement de la banque", divider="gray")
-    st.caption(
-        "Facultatif mais recommandé : permet de reprendre au centime les intérêts ajoutés au capital par la banque. "
-        "Recopiez une ligne de situation du tableau (ex. « 08/09/2026 — capital amorti 2 326,56 — capital restant dû 21 859,20 »)."
-    )
-    c1, c2 = st.columns(2)
-    deja_amorti = c1.number_input("Capital amorti (€)", key=cle("deja_amorti"), min_value=0.0, value=None, step=0.01, format="%.2f", placeholder="ex. 2 326,56")
-    restant_du = c2.number_input("Capital restant dû (€)", key=cle("restant_du"), min_value=0.0, value=None, step=0.01, format="%.2f", placeholder="ex. 21 859,20")
-    if restant_du:
-        capital_depart = round(restant_du + (deja_amorti or 0), 2)
-        st.caption(f"Capital à rembourser après le différé : **{euros(capital_depart)}**")
-
 # --- Options -----------------------------------------------------------------------------
 with st.expander("Options (assurance, frais, périodicité…)"):
     c1, c2 = st.columns(2)
@@ -192,7 +186,6 @@ params = ParametresPret(
     jour_prelevement=premier_paiement.day,
     deblocages=deblocages,
     interets_differe_capitalises=interets_capitalises,
-    interets_capitalises_imposes=round(capital_depart - capital, 2) if capital_depart else None,
     echeance_imposee=echeance_banque or None,
     remboursements_constates=[] if remboursements is None else remboursements["Capital remboursé (€)"].tolist(),
     periodicite=periodicite,
@@ -203,6 +196,37 @@ params = ParametresPret(
     autres_frais=autres_frais,
     autres_frais_en_pourcentage=unite_frais == "%",
 )
+with st.expander("🎯 Ajuster sur un capital restant dû connu (facultatif)"):
+    st.caption(
+        "Si vous connaissez le capital restant dû à une date (tableau de la banque, relevé annuel…), saisissez-le : "
+        "l'échéancier est recalculé pour retomber exactement sur ce montant."
+    )
+    c1, c2 = st.columns(2)
+    date_reference = c1.date_input("Date", key=cle("date_reference"), value=None, format="DD/MM/YYYY")
+    solde_reference = c2.number_input(
+        "Capital restant dû à cette date (€)", key=cle("solde_reference"), min_value=0.0, value=None, step=0.01, format="%.2f", placeholder="ex. 21 859,20"
+    )
+    if date_reference and solde_reference is not None:
+        ajustement = ajuster_sur_solde(params, date_reference, solde_reference)
+        if ajustement is None:
+            st.warning("Ajustement impossible : la date est antérieure à la 1re échéance, ou le type de remboursement ne s'y prête pas.")
+        else:
+            params = ajustement.parametres
+            precision = abs(ajustement.solde_obtenu - solde_reference)
+            detail = (
+                f"intérêts ajoutés au capital pendant le différé : {euros(params.interets_capitalises_imposes)}"
+                if ajustement.levier == "intérêts capitalisés"
+                else f"échéance recalculée : {euros(params.echeance_imposee)}"
+            )
+            message = (
+                f"Échéancier recalculé ({detail}). Capital restant dû après l'échéance du "
+                f"{ajustement.date_echeance.strftime('%d/%m/%Y')} : {euros(ajustement.solde_obtenu)}"
+            )
+            if precision <= 0.005:
+                st.success(message + " ✅")
+            else:
+                st.warning(message + f" — le plus proche possible au centime (écart {euros(precision)}).")
+
 resultat = calculer(params)
 echeancier = resultat.echeancier
 

@@ -5,6 +5,7 @@ import openpyxl
 import pytest
 
 from echeancier import (
+    ajuster_sur_solde,
     calculer,
     MODELE_PENNYLANE,
     Deblocage,
@@ -130,6 +131,32 @@ def test_option_jours_exacts():
     avril, mai = e.iloc[3], e.iloc[4]  # 05/03 → 05/04 : 31 jours ; 05/04 → 05/05 : 30 jours
     assert avril["Intérêt (€)"] == pytest.approx(e["Solde (€)"].iloc[2] * 0.0417 * 31 / 365, abs=0.01)
     assert mai["Intérêt (€)"] == pytest.approx(avril["Solde (€)"] * 0.0417 * 30 / 365, abs=0.01)
+
+
+def test_ajustement_sur_le_capital_restant_du_de_la_banque():
+    """CRD de la banque au 08/09/2026 (21 859,20 €) : l'application retrouve seule le tableau bancaire."""
+    a = ajuster_sur_solde(pret_banque(468.45), date(2026, 9, 8), 21_859.20)
+    assert a.levier == "intérêts capitalisés"
+    assert a.date_echeance == date(2026, 9, 5)
+    assert a.solde_obtenu == pytest.approx(21_859.20)
+    assert a.parametres.interets_capitalises_imposes == pytest.approx(185.76)
+    e = calculer_echeancier(a.parametres)
+    for rang, attendu in TABLEAU_BANQUE.items():
+        ligne = e.iloc[rang - 1]
+        assert (ligne["Intérêt (€)"], ligne["Amortissement (€)"], ligne["Solde (€)"]) == pytest.approx(attendu, abs=0.001)
+
+
+def test_ajustement_sans_differe_recalcule_l_echeance():
+    p = pret_simple()
+    p.echeance_imposee = 400.0  # échéance erronée
+    a = ajuster_sur_solde(p, date(2026, 12, 15), 19_591.09)  # CRD du fichier type Pennylane au 10/12/2026
+    assert a.levier == "échéance"
+    assert a.parametres.echeance_imposee == pytest.approx(443.84)
+    assert a.solde_obtenu == pytest.approx(19_591.09)
+
+
+def test_ajustement_avant_la_premiere_echeance():
+    assert ajuster_sur_solde(pret_simple(), date(2025, 12, 1), 24_000) is None
 
 
 def test_export_respecte_le_fichier_type(tmp_path):

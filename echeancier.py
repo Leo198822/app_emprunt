@@ -12,7 +12,7 @@ Principe (constaté sur le grand livre d'un prêt Crédit Agricole à déblocage
 from __future__ import annotations
 
 import calendar
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date
 from io import BytesIO
 from pathlib import Path
@@ -263,6 +263,58 @@ def calculer(p: ParametresPret) -> Resultat:
 
 def calculer_echeancier(p: ParametresPret) -> pd.DataFrame:
     return calculer(p).echeancier
+
+
+@dataclass
+class Ajustement:
+    parametres: ParametresPret  # paramètres recalculés
+    date_echeance: date  # échéance retenue (dernière à la date saisie ou avant)
+    solde_obtenu: float
+    levier: str  # « intérêts capitalisés » ou « échéance »
+
+
+def solde_a_la_date(p: ParametresPret, jour: date) -> tuple[date, float] | None:
+    """Capital restant dû après la dernière échéance à la date donnée ou avant."""
+    e = calculer_echeancier(p)
+    passees = e[e["Date"] <= jour]
+    if passees.empty:
+        return None
+    return passees["Date"].iloc[-1], float(passees["Solde (€)"].iloc[-1])
+
+
+def ajuster_sur_solde(p: ParametresPret, jour: date, solde_cible: float) -> Ajustement | None:
+    """Recalcule l'échéancier pour que le capital restant dû à une date corresponde à celui de la banque.
+
+    Avec un différé capitalisé, on ajuste le montant des intérêts capitalisés (donc le capital à
+    amortir) ; sinon on ajuste l'échéance constante. Recherche par dichotomie au centime.
+    """
+    if dates_echeances(p)[0] > jour:
+        return None
+    if p.nb_echeances_differe and p.interets_differe_capitalises:
+        levier, croissant = "intérêts capitalisés", True
+        variante = lambda cts: replace(p, interets_capitalises_imposes=cts / 100)  # noqa: E731
+        bas, haut = 0, round(p.capital * 100)
+    elif p.type_remboursement == "Échéances constantes":
+        levier, croissant = "échéance", False  # une échéance plus forte réduit le capital restant dû
+        variante = lambda cts: replace(p, echeance_imposee=cts / 100)  # noqa: E731
+        bas, haut = 1, round(p.capital * 100)
+    else:
+        return None
+
+    def ecart(cts: int) -> float:
+        return solde_a_la_date(variante(cts), jour)[1] - solde_cible
+
+    # Plus petite valeur (en centimes) dont le solde dépasse (ou, en décroissant, passe sous) la cible.
+    while bas < haut:
+        milieu = (bas + haut) // 2
+        if (ecart(milieu) >= 0) == croissant:
+            haut = milieu
+        else:
+            bas = milieu + 1
+    meilleur = min((c for c in (bas - 1, bas, bas + 1) if c > 0), key=lambda c: abs(ecart(c)))
+    parametres = variante(meilleur)
+    date_echeance, solde = solde_a_la_date(parametres, jour)
+    return Ajustement(parametres, date_echeance, solde, levier)
 
 
 def exporter_pennylane(p: ParametresPret, echeancier: pd.DataFrame) -> bytes:

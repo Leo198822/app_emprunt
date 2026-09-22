@@ -5,15 +5,17 @@ plusieurs fois et génère le fichier d'import **Pennylane** (même structure qu
 
 ## Utilisation
 
-L'écran se remplit en trois étapes ; l'échéancier se génère dès que les informations obligatoires sont saisies.
+L'écran se remplit en deux étapes ; l'échéancier se génère dès que les informations obligatoires sont saisies.
 
 1. **Le prêt** (offre de prêt) : montant emprunté, taux, date de la 1re échéance, nombre total
    d'échéances, dont échéances de différé, et — facultatif — le montant de l'échéance indiqué par la
    banque. Si un différé est saisi : intérêts ajoutés au capital ou prélevés.
 2. **Les déblocages** : import du grand livre du compte 164 exporté de Pennylane (recommandé : les
    remboursements comptabilisés servent aussi de contrôle), saisie manuelle, ou fonds versés en une fois.
-3. **Le tableau de la banque** (si les intérêts du différé sont ajoutés au capital) : recopier le
-   capital amorti et le capital restant dû d'une ligne de situation du tableau.
+3. **Ajustement (facultatif)** : sous l'échéancier, saisir une date et le capital restant dû connu à
+   cette date (tableau de la banque, relevé…). L'échéancier est recalculé pour retomber exactement
+   dessus : l'application ajuste les intérêts ajoutés au capital pendant le différé ou, sans différé,
+   l'échéance.
 
 Les options (assurance, frais, périodicité, type de remboursement, intérêts en jours exacts) sont
 regroupées dans un volet repliable. Le bouton **Télécharger l'échéancier Pennylane** produit le fichier
@@ -28,7 +30,7 @@ d'import (même structure que `modeles/Echeancier_type.xlsx`, dates au format jj
 | Échéance hors assurance | 468,45 € |
 | Nombre total d'échéances / dont différé | 60 / 3 (intérêts ajoutés au capital) |
 | Déblocages | grand livre `tests/grand_livre_exemple.xlsx` |
-| Capital amorti / capital restant dû | 2 326,56 € / 21 859,20 € |
+| Ajustement : date / capital restant dû | 08/09/2026 / 21 859,20 € |
 
 ## Règles de calcul
 
@@ -43,13 +45,14 @@ Règles déduites du grand livre d'un prêt Crédit Agricole à déblocages succ
 - **Amortissement** : à la fin du différé, le capital total + intérêts capitalisés est remboursé par
   échéances constantes, comme un prêt classique, même si des fonds sont encore débloqués ensuite.
   Les intérêts de chaque échéance valent capital restant dû × taux / 12, comme sur le tableau
-  bancaire. Une option (réglages avancés) calcule à la place en jours exacts / 365.
-- **Réglages avancés** pour coller au tableau de la banque :
+  bancaire. Une option (volet « Options ») calcule à la place en jours exacts / 365.
+- **Pour coller au tableau de la banque** :
   - *Échéance de l'offre de prêt* : fixe l'échéance constante ;
-  - *Capital à amortir en fin de différé* : capital restant dû + capital déjà amorti lus sur le
-    tableau bancaire. À défaut, il est déduit de l'échéance et calé sur le grand livre importé.
-  - Exemple du prêt n°141 : échéance 468,45 €, capital 24 185,76 € (21 859,20 + 2 326,56) →
-    tableau bancaire reproduit au centime.
+  - *Ajustement sur un capital restant dû connu* : l'application recherche au centime les intérêts
+    capitalisés (ou l'échéance) qui redonnent ce solde. À défaut, le capital est déduit de
+    l'échéance et calé sur le grand livre importé.
+  - Exemple du prêt n°141 : échéance 468,45 €, capital restant dû de 21 859,20 € au 08/09/2026 →
+    185,76 € d'intérêts capitalisés, tableau bancaire reproduit au centime.
 - Dans le fichier Pennylane, les intérêts capitalisés apparaissent en **amortissement négatif**
   (échéance à 0, le solde augmente), ce qui garde un solde cohérent depuis le capital de l'en-tête.
 - Dates au format français (jj/mm/aaaa) dans l'application et dans le fichier exporté.
