@@ -4,7 +4,9 @@ Principe (constaté sur le grand livre d'un prêt Crédit Agricole à déblocage
 - pendant le **différé**, les intérêts courent sur les fonds réellement débloqués, en jours
   exacts sur une base de 365 jours ; ils sont soit payés à chaque échéance, soit **capitalisés** (ajoutés au capital) ;
 - à la fin du différé, la banque amortit le capital total (+ intérêts capitalisés) par
-  **échéances constantes**, comme un prêt classique, quelles que soient les dates des derniers déblocages.
+  **échéances constantes**, comme un prêt classique, quelles que soient les dates des derniers déblocages ;
+- tous les intérêts sont calculés en jours exacts sur une base de 365 jours ; l'échéance constante
+  reste celle de la formule classique et la dernière échéance absorbe l'écart.
 """
 
 from __future__ import annotations
@@ -20,7 +22,7 @@ import pandas as pd
 
 MODELE_PENNYLANE = Path(__file__).parent / "modeles" / "Echeancier_type.xlsx"
 
-BASE_JOURS = 365  # intérêts du différé : jours exacts / 365
+BASE_JOURS = 365  # intérêts : jours exacts / 365
 FORMAT_DATE = "dd/mm/yyyy"  # dates au format français dans le fichier exporté
 PERIODICITES = {"Mensuelle": 1, "Trimestrielle": 3, "Semestrielle": 6, "Annuelle": 12}
 COLONNES = ["Date", "Intérêt (€)", "Assurance (€)", "Autres frais (€)", "Amortissement (€)", "Échéance (€)", "Solde (€)"]
@@ -47,6 +49,7 @@ class ParametresPret:
     type_remboursement: str = "Échéances constantes"  # ou "Amortissement constant"
     echeance_imposee: float | None = None  # échéance hors assurance de l'offre bancaire, si connue
     remboursements_constates: list[float] = field(default_factory=list)  # capital remboursé (grand livre)
+    interets_jours_exacts: bool = True  # jours exacts / 365 ; False : taux / 12 comme Pennylane
     assurance: float = 0.0
     assurance_en_pourcentage: bool = False  # True : taux annuel sur le capital ; False : montant total
     autres_frais: float = 0.0
@@ -139,15 +142,24 @@ def interets_differe(p: ParametresPret, dates: list[date]) -> list[float]:
     return interets
 
 
-def tableau_constant(base: float, echeance: float, t: float, n: int) -> list[tuple[float, float]]:
+def facteurs_interets(p: ParametresPret, dates: list[date]) -> list[float]:
+    """Taux d'intérêt de chaque période d'amortissement : jours exacts / 365 (ou taux périodique)."""
+    if not p.interets_jours_exacts:
+        return [p.taux_periodique] * p.nb_echeances_amortissement
+    r, k0 = p.taux / 100, p.nb_echeances_differe
+    debuts = [dates[k0 - 1] if k0 else ajouter_mois(dates[0], -p.mois_par_periode, p.jour_prelevement)] + dates[k0:-1]
+    return [r * (fin - debut).days / BASE_JOURS for debut, fin in zip(debuts, dates[k0:])]
+
+
+def tableau_constant(base: float, echeance: float, facteurs: list[float]) -> list[tuple[float, float]]:
     """(intérêt, amortissement) de chaque échéance, arrondis au centime ligne à ligne.
 
     La dernière échéance solde le capital et reste égale aux autres quand l'écart n'est qu'un arrondi
     (convention Pennylane et bancaire).
     """
-    lignes, restant = [], base
-    for k in range(n):
-        interet = round(restant * t, 2)
+    lignes, restant, n = [], base, len(facteurs)
+    for k, facteur in enumerate(facteurs):
+        interet = round(restant * facteur, 2)
         if k == n - 1:
             a = restant
             if abs(round(echeance - a, 2) - interet) <= 0.02:
@@ -163,19 +175,20 @@ def echeance_pour(base: float, t: float, n: int) -> float:
     return round(base / n if t == 0 else base * t / (1 - (1 + t) ** -n), 2)
 
 
-def calibrer_base(echeance: float, t: float, n: int, constates: list[float]) -> float:
+def calibrer_base(echeance: float, t: float, facteurs: list[float], constates: list[float]) -> float:
     """Capital amorti correspondant à une échéance connue.
 
     Sans données comptables : valeur actuelle des échéances. Avec les remboursements de capital du
     grand livre : milieu de la plage de capitaux (au centime) qui les reproduit exactement.
     """
+    n = len(facteurs)
     base = round(echeance * n if t == 0 else echeance * (1 - (1 + t) ** -n) / t, 2)
     if not constates:
         return base
     compatibles = [
         c / 100
         for c in range(round(base * 100) - 1000, round(base * 100) + 1000)
-        if [a for _, a in tableau_constant(c / 100, echeance, t, n)[: len(constates)]] == constates
+        if [a for _, a in tableau_constant(c / 100, echeance, facteurs)[: len(constates)]] == constates
         and echeance_pour(c / 100, t, n) == echeance
     ]
     return compatibles[len(compatibles) // 2] if compatibles else base
@@ -188,6 +201,7 @@ def calculer(p: ParametresPret) -> Resultat:
         raise ValueError("Le nombre d'échéances doit être supérieur au nombre d'échéances de différé.")
     dates = dates_echeances(p)
     interets = interets_differe(p, dates)
+    facteurs = facteurs_interets(p, dates)
     calcules = round(sum(interets), 2) if p.interets_differe_capitalises else 0.0
 
     capitalises = calcules
@@ -199,19 +213,19 @@ def calculer(p: ParametresPret) -> Resultat:
     if p.type_remboursement == "Amortissement constant":
         amortissements = repartir(base, n)
         lignes_amort, restant = [], base
-        for a in amortissements:
-            lignes_amort.append((round(restant * t, 2), a))
+        for a, facteur in zip(amortissements, facteurs):
+            lignes_amort.append((round(restant * facteur, 2), a))
             restant = round(restant - a, 2)
     else:
         if p.echeance_imposee:
             echeance = round(p.echeance_imposee, 2)
             if p.interets_differe_capitalises and p.interets_capitalises_imposes is None:
                 # L'échéance de la banque fixe le capital amorti, donc les intérêts capitalisés.
-                base = calibrer_base(echeance, t, n, p.remboursements_constates)
+                base = calibrer_base(echeance, t, facteurs, p.remboursements_constates)
                 capitalises = round(base - p.capital, 2)
         else:
             echeance = echeance_pour(base, t, n)
-        lignes_amort = tableau_constant(base, echeance, t, n)
+        lignes_amort = tableau_constant(base, echeance, facteurs)
 
     if p.interets_differe_capitalises and interets:
         # L'écart entre intérêts retenus et calculés est porté sur la dernière échéance de différé.

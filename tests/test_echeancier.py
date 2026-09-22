@@ -26,6 +26,7 @@ def pret_simple():
         date_premier_paiement=date(2026, 1, 5),
         jour_prelevement=10,
         deblocages=[Deblocage(date(2025, 12, 10), 24_000)],
+        interets_jours_exacts=False,
     )
 
 
@@ -84,10 +85,20 @@ def test_differe_paye():
     assert e["Amortissement (€)"].sum() == pytest.approx(24_000)
 
 
-def test_echeance_bancaire_reproduit_le_grand_livre():
-    """Échéance de l'offre (468,45 €) + remboursements du grand livre : écart nul au centime."""
+def test_interets_en_jours_exacts():
+    """Par défaut, les intérêts d'amortissement suivent le nombre de jours de chaque mois (base 365)."""
+    e = calculer_echeancier(pret_banque(468.45))
+    avril, mai = e.iloc[3], e.iloc[4]  # 05/03 → 05/04 : 31 jours ; 05/04 → 05/05 : 30 jours
+    assert avril["Intérêt (€)"] == pytest.approx(e["Solde (€)"].iloc[2] * 0.0417 * 31 / 365, abs=0.01)
+    assert mai["Intérêt (€)"] == pytest.approx(avril["Solde (€)"] * 0.0417 * 30 / 365, abs=0.01)
+    assert e["Solde (€)"].iloc[-1] == pytest.approx(0)
+
+
+def test_taux_mensuel_reproduit_le_grand_livre():
+    """Avec l'option taux / 12 et l'échéance de l'offre (468,45 €) : écart nul au centime."""
     _, remboursements = lire_grand_livre(GRAND_LIVRE)
     p = pret_banque(468.45, remboursements["Capital remboursé (€)"])
+    p.interets_jours_exacts = False
     r = calculer(p)
     assert comparer(r.echeancier, remboursements)["Écart (€)"].abs().max() == 0
     assert set(r.echeancier["Échéance (€)"].iloc[3:-1]) == {468.45}

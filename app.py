@@ -125,6 +125,11 @@ with st.expander("Réglages avancés (pour coller exactement au tableau de la ba
         disabled=not (nb_differe and interets_capitalises),
         help="Laisser à 0 pour les calculer (ou les déduire de l'échéance saisie).",
     )
+    taux_mensuel = st.checkbox(
+        "Intérêts d'amortissement au taux mensuel (taux / 12) au lieu des jours exacts / 365",
+        help="Par défaut, tous les intérêts sont calculés en jours exacts sur 365 jours. "
+        "Cochez pour appliquer taux / 12 à chaque échéance d'amortissement, comme le tableau Pennylane.",
+    )
 
 params = ParametresPret(
     capital=capital,
@@ -137,6 +142,7 @@ params = ParametresPret(
     periodicite=periodicite,
     type_remboursement=type_remboursement,
     interets_differe_capitalises=interets_capitalises,
+    interets_jours_exacts=not taux_mensuel,
     interets_capitalises_imposes=interets_capitalises_imposes or None,
     echeance_imposee=echeance_imposee or None,
     remboursements_constates=[] if remboursements is None else remboursements["Capital remboursé (€)"].tolist(),

@@ -24,6 +24,10 @@ Règles déduites du grand livre d'un prêt Crédit Agricole à déblocages succ
   prélevé), soit payés à chaque échéance.
 - **Amortissement** : à la fin du différé, le capital total + intérêts capitalisés est remboursé par
   échéances constantes, comme un prêt classique, même si des fonds sont encore débloqués ensuite.
+  Les intérêts de chaque échéance sont calculés en **jours exacts sur 365 jours** (capital restant dû ×
+  taux × nombre de jours depuis l'échéance précédente / 365) ; l'amortissement du capital varie donc
+  légèrement selon la longueur des mois et la dernière échéance absorbe l'écart. Une option
+  (réglages avancés) applique à la place taux / 12, comme le tableau Pennylane.
 - **Échéance de l'offre de prêt** (réglages avancés) : si elle est saisie, le capital à amortir en est
   déduit ; si le grand livre est importé, il est calé pour reproduire exactement le capital remboursé.
   Exemple du prêt n°141 : échéance 468,45 € → 185,69 € d'intérêts capitalisés, 24 185,69 € amortis.
