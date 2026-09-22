@@ -9,9 +9,8 @@ from echeancier import (
     PERIODICITES,
     Deblocage,
     ParametresPret,
-    calculer_echeancier,
+    calculer,
     comparer,
-    echeancier_avec_deblocages,
     exporter_pennylane,
     lire_grand_livre,
 )
@@ -90,14 +89,23 @@ nb_differe = c2.number_input(
     min_value=0,
     max_value=int(nb_echeances) - 1,
     value=0,
-    help="Échéances de préfinancement pendant lesquelles seuls les intérêts sont payés.",
+    help="Échéances de préfinancement pendant la mise à disposition des fonds : pas de remboursement de capital.",
+)
+interets_capitalises = (
+    st.radio(
+        "Intérêts pendant le différé",
+        ["Capitalisés (ajoutés au capital)", "Payés à chaque échéance"],
+        horizontal=True,
+        disabled=nb_differe == 0,
+        help="Capitalisés : rien n'est prélevé pendant le différé, les intérêts s'ajoutent au capital à amortir.",
+    ).startswith("Capitalisés")
 )
 
 c1, c2 = st.columns(2)
 jour = c1.selectbox("Jour de prélèvement", list(range(1, 32)), index=9, format_func=lambda j: f"Le {j} du mois")
 premier_paiement = c2.date_input("Date du premier paiement", value=date(2026, 1, 5), format="DD/MM/YYYY")
 
-with st.expander("Réglages avancés (pour coller exactement au tableau de la banque)"):
+with st.expander("Réglages avancés (pour coller exactement au tableau de la banque)", expanded=True):
     c1, c2 = st.columns(2)
     echeance_imposee = c1.number_input(
         "Échéance hors assurance de l'offre de prêt (€)",
@@ -105,14 +113,19 @@ with st.expander("Réglages avancés (pour coller exactement au tableau de la ba
         value=0.0,
         step=0.01,
         format="%.2f",
-        help="Laisser à 0 pour la calculer. Si la banque indique une échéance différente, saisissez-la ici : "
-        "l'amortissement du capital suivra alors exactement celui de la banque.",
+        help="Laisser à 0 pour la calculer. Si elle est saisie, le capital à amortir (et donc les intérêts "
+        "capitalisés) est déduit de cette échéance, et calé sur le grand livre s'il a été importé.",
     )
-    base_jours = c2.selectbox("Base de calcul des intérêts au prorata", [365, 360], help="Pour les fonds débloqués en cours de période.")
-    avec_lignes_deblocage = st.checkbox(
-        "Inclure les déblocages comme lignes de l'échéancier (amortissement négatif)",
-        help="Par défaut, seules les échéances figurent dans le fichier ; le solde tient compte des fonds débloqués.",
+    interets_capitalises_imposes = c2.number_input(
+        "Intérêts capitalisés du tableau bancaire (€)",
+        min_value=0.0,
+        value=0.0,
+        step=0.01,
+        format="%.2f",
+        disabled=not (nb_differe and interets_capitalises),
+        help="Laisser à 0 pour les calculer (ou les déduire de l'échéance saisie).",
     )
+    base_jours = st.selectbox("Base de calcul des intérêts au prorata", [365, 360], help="Pour les fonds débloqués en cours de période.")
 
 params = ParametresPret(
     capital=capital,
@@ -124,7 +137,10 @@ params = ParametresPret(
     deblocages=deblocages,
     periodicite=periodicite,
     type_remboursement=type_remboursement,
+    interets_differe_capitalises=interets_capitalises,
+    interets_capitalises_imposes=interets_capitalises_imposes or None,
     echeance_imposee=echeance_imposee or None,
+    remboursements_constates=[] if remboursements is None else remboursements["Capital remboursé (€)"].tolist(),
     assurance=assurance,
     assurance_en_pourcentage=unite_assurance == "%",
     autres_frais=autres_frais,
@@ -135,26 +151,38 @@ params = ParametresPret(
 if capital <= 0:
     st.stop()
 
-echeancier = calculer_echeancier(params)
-export = echeancier_avec_deblocages(params, echeancier) if avec_lignes_deblocage else echeancier
+resultat = calculer(params)
+echeancier = export = resultat.echeancier
 
 # --- Résultats -------------------------------------------------------------------------
 st.header("Échéancier")
 m1, m2, m3, m4 = st.columns(4)
-m1.metric("Échéance courante", euros(echeancier["Échéance (€)"].mode().iloc[0]))
-m2.metric("Total des intérêts", euros(echeancier["Intérêt (€)"].sum()))
-m3.metric("Capital amorti", euros(echeancier["Amortissement (€)"].sum()))
+m1.metric("Échéance d'amortissement", euros(echeancier["Échéance (€)"].iloc[params.nb_echeances_differe]))
+m2.metric("Capital à amortir", euros(resultat.capital_amorti))
+m3.metric("Total des intérêts", euros(echeancier["Intérêt (€)"].sum()))
 m4.metric("Coût total", euros(echeancier[["Intérêt (€)", "Assurance (€)", "Autres frais (€)"]].sum().sum()))
 
-if (echeancier["Solde (€)"] < -0.005).any():
-    st.error("Le solde devient négatif : le capital amorti dépasse les fonds débloqués. Vérifiez les déblocages et le différé.")
-if abs(echeancier["Amortissement (€)"].sum() - capital) > 0.005:
-    st.warning("Le capital n'est pas entièrement amorti sur la durée : vérifiez l'échéance imposée.")
+if params.nb_echeances_differe and interets_capitalises:
+    note = f"Intérêts capitalisés pendant le différé : {euros(resultat.interets_capitalises_retenus)}"
+    ecart = round(resultat.interets_capitalises_retenus - resultat.interets_capitalises_calcules, 2)
+    if ecart:
+        note += (
+            f" (calcul sur les déblocages : {euros(resultat.interets_capitalises_calcules)} ; "
+            f"l'écart de {euros(ecart)} est porté sur la dernière échéance de différé)"
+        )
+    st.info(note)
+
+derniere = echeancier["Échéance (€)"].iloc[-1]
+if resultat.echeance_constante and abs(derniere - resultat.echeance_constante) > 1:
+    st.warning(
+        f"La dernière échéance ({euros(derniere)}) s'écarte de l'échéance constante : "
+        "vérifiez l'échéance, la durée et le différé saisis."
+    )
 
 affiche = export.copy()
 affiche["Date"] = pd.to_datetime(affiche["Date"]).dt.strftime("%d/%m/%Y")
 st.dataframe(
-    affiche.style.format({c: "{:,.2f}" for c in affiche.columns if c != "Date"}, na_rep=""),
+    affiche.style.format({c: "{:,.2f}" for c in affiche.columns if c != "Date"}),
     width="stretch",
     hide_index=True,
     height=420,
@@ -178,7 +206,7 @@ if remboursements is not None and not remboursements.empty:
     else:
         st.warning(
             f"Écart maximal de {euros(ecart_max)} sur le capital remboursé. Si l'écart est régulier, saisissez "
-            "l'échéance de l'offre de prêt dans « Réglages avancés »."
+            "l'échéance de l'offre de prêt dans « Réglages avancés » : le capital sera calé sur le grand livre."
         )
     controle["Date"] = pd.to_datetime(controle["Date"]).dt.strftime("%d/%m/%Y")
     st.dataframe(controle.style.format({c: "{:,.2f}" for c in controle.columns if c != "Date"}), hide_index=True)

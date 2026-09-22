@@ -1,11 +1,10 @@
 """Calcul d'un échéancier d'emprunt à déblocages multiples, au format Pennylane.
 
-Principe (constaté sur les tableaux bancaires de type Crédit Agricole) :
-- le **capital amorti** suit un tableau théorique calculé sur le capital total du prêt,
-  indépendamment des dates de déblocage ;
-- les **intérêts** sont calculés sur le capital réellement débloqué et non encore remboursé,
-  au prorata des jours pour les fonds débloqués en cours de période ;
-- les premières échéances peuvent être des échéances de différé (intérêts seuls).
+Principe (constaté sur le grand livre d'un prêt Crédit Agricole à déblocages successifs) :
+- pendant le **différé**, les intérêts courent sur les fonds réellement débloqués, au prorata
+  des jours ; ils sont soit payés à chaque échéance, soit **capitalisés** (ajoutés au capital) ;
+- à la fin du différé, la banque amortit le capital total (+ intérêts capitalisés) par
+  **échéances constantes**, comme un prêt classique, quelles que soient les dates des derniers déblocages.
 """
 
 from __future__ import annotations
@@ -39,10 +38,13 @@ class ParametresPret:
     date_premier_paiement: date
     jour_prelevement: int
     deblocages: list[Deblocage] = field(default_factory=list)
-    nb_echeances_differe: int = 0  # échéances d'intérêts seuls avant l'amortissement
+    nb_echeances_differe: int = 0  # échéances de différé avant l'amortissement
+    interets_differe_capitalises: bool = True  # False : intérêts du différé payés à chaque échéance
+    interets_capitalises_imposes: float | None = None  # montant du tableau bancaire, si connu
     periodicite: str = "Mensuelle"
     type_remboursement: str = "Échéances constantes"  # ou "Amortissement constant"
     echeance_imposee: float | None = None  # échéance hors assurance de l'offre bancaire, si connue
+    remboursements_constates: list[float] = field(default_factory=list)  # capital remboursé (grand livre)
     assurance: float = 0.0
     assurance_en_pourcentage: bool = False  # True : taux annuel sur le capital ; False : montant total
     autres_frais: float = 0.0
@@ -83,6 +85,15 @@ class ParametresPret:
         return self.autres_frais if self.autres_frais_en_pourcentage else 0.0
 
 
+@dataclass
+class Resultat:
+    echeancier: pd.DataFrame
+    capital_amorti: float  # capital + intérêts capitalisés
+    interets_capitalises_calcules: float
+    interets_capitalises_retenus: float
+    echeance_constante: float | None
+
+
 def ajouter_mois(d: date, mois: int, jour: int | None = None) -> date:
     """Décale une date de `mois` mois en gardant le jour voulu (borné à la fin du mois)."""
     total = d.month - 1 + mois
@@ -107,84 +118,123 @@ def repartir(total: float, n: int) -> list[float]:
     return [part] * (n - 1) + [round(total - part * (n - 1), 2)]
 
 
-def amortissements_theoriques(p: ParametresPret) -> tuple[list[float], float | None]:
-    """Tableau d'amortissement théorique du capital total, arrondi au centime comme les banques.
+def interets_differe(p: ParametresPret, dates: list[date]) -> list[float]:
+    """Intérêts de chaque échéance de différé, sur les fonds réellement débloqués.
 
-    Retourne les amortissements et l'échéance constante hors assurance (None en amortissement constant).
+    Période pleine (taux périodique) pour les fonds débloqués avant la période, prorata des jours
+    pour ceux débloqués pendant la période, et intérêts intercalaires depuis le déblocage pour la
+    première échéance.
     """
-    n, t, restant = p.nb_echeances_amortissement, p.taux_periodique, p.capital
-    if n <= 0:
-        raise ValueError("Le nombre d'échéances doit être supérieur au nombre d'échéances de différé.")
-    if p.type_remboursement == "Amortissement constant":
-        return repartir(p.capital, n), None
-    if p.echeance_imposee:
-        echeance = round(p.echeance_imposee, 2)
-    elif t == 0:
-        echeance = round(p.capital / n, 2)
-    else:
-        echeance = round(p.capital * t / (1 - (1 + t) ** -n), 2)
-    amortissements = []
-    for k in range(n):
-        interet = round(restant * t, 2)
-        a = restant if k == n - 1 else min(round(echeance - interet, 2), restant)
-        amortissements.append(round(a, 2))
-        restant = round(restant - a, 2)
-    return amortissements, echeance
-
-
-def calculer_echeancier(p: ParametresPret) -> pd.DataFrame:
-    """Échéancier réel : amortissement théorique, intérêts sur le capital effectivement débloqué."""
     deblocages = sorted(p.deblocages, key=lambda d: d.date) or [Deblocage(p.date_premier_paiement, p.capital)]
-    dates = dates_echeances(p)
-    theoriques, echeance_constante = amortissements_theoriques(p)
-    amortissements = [0.0] * p.nb_echeances_differe + theoriques
-    assurances = repartir(p.montant_total_assurance, p.nb_echeances)
-    frais = repartir(p.montant_total_autres_frais, p.nb_echeances)
     r, t = p.taux / 100, p.taux_periodique
-
-    lignes, rembourse = [], 0.0
-    fin_precedente = ajouter_mois(dates[0], -p.mois_par_periode, p.jour_prelevement)
-    for k, fin in enumerate(dates):
-        debut = fin_precedente
-        # Capital débloqué avant la période et non remboursé : intérêt d'une période pleine.
-        debloque_avant = sum(d.montant for d in deblocages if d.date <= debut)
-        interet = (debloque_avant - rembourse) * t
-        # Fonds débloqués pendant la période : prorata des jours jusqu'à l'échéance.
+    interets, debut = [], ajouter_mois(dates[0], -p.mois_par_periode, p.jour_prelevement)
+    for k, fin in enumerate(dates[: p.nb_echeances_differe]):
+        interet = sum(d.montant for d in deblocages if d.date <= debut) * t
         for d in deblocages:
             if debut < d.date <= fin:
                 interet += d.montant * r * (fin - d.date).days / p.base_jours
             elif k == 0 and d.date < debut:
-                # Première échéance : intérêts intercalaires depuis le déblocage.
                 interet += d.montant * r * (debut - d.date).days / p.base_jours
-        interet = round(interet, 2)
-        if k == len(dates) - 1 and echeance_constante is not None:
-            # Comme Pennylane et les banques : la dernière échéance reste égale aux autres,
-            # l'intérêt absorbe l'écart d'arrondi.
-            ajuste = round(echeance_constante - amortissements[k], 2)
-            if abs(ajuste - interet) <= 0.02:
-                interet = ajuste
-        rembourse = round(rembourse + amortissements[k], 2)
-        solde = round(sum(d.montant for d in deblocages if d.date <= fin) - rembourse, 2)
-        echeance = round(interet + assurances[k] + frais[k] + amortissements[k], 2)
-        lignes.append([fin, interet, assurances[k], frais[k], amortissements[k], echeance, solde])
-        fin_precedente = fin
-    return pd.DataFrame(lignes, columns=COLONNES)
+        interets.append(round(interet, 2))
+        debut = fin
+    return interets
 
 
-def lignes_deblocage(p: ParametresPret) -> pd.DataFrame:
-    """Déblocages présentés comme des lignes d'amortissement négatif (le solde augmente)."""
-    return pd.DataFrame(
-        [[d.date, 0.0, 0.0, 0.0, -d.montant, -d.montant, None] for d in p.deblocages], columns=COLONNES
-    )
+def tableau_constant(base: float, echeance: float, t: float, n: int) -> list[tuple[float, float]]:
+    """(intérêt, amortissement) de chaque échéance, arrondis au centime ligne à ligne.
+
+    La dernière échéance solde le capital et reste égale aux autres quand l'écart n'est qu'un arrondi
+    (convention Pennylane et bancaire).
+    """
+    lignes, restant = [], base
+    for k in range(n):
+        interet = round(restant * t, 2)
+        if k == n - 1:
+            a = restant
+            if abs(round(echeance - a, 2) - interet) <= 0.02:
+                interet = round(echeance - a, 2)
+        else:
+            a = min(round(echeance - interet, 2), restant)
+        lignes.append((interet, round(a, 2)))
+        restant = round(restant - a, 2)
+    return lignes
 
 
-def echeancier_avec_deblocages(p: ParametresPret, echeancier: pd.DataFrame) -> pd.DataFrame:
-    """Insère les déblocages dans l'échéancier et recalcule le solde ligne à ligne."""
-    tout = pd.concat([lignes_deblocage(p), echeancier], ignore_index=True)
-    tout["_ordre"] = tout["Échéance (€)"] >= 0  # à date égale, le déblocage passe avant l'échéance
-    tout = tout.sort_values(["Date", "_ordre"], kind="stable").drop(columns="_ordre").reset_index(drop=True)
-    tout["Solde (€)"] = (-tout["Amortissement (€)"]).cumsum().round(2)
-    return tout
+def echeance_pour(base: float, t: float, n: int) -> float:
+    return round(base / n if t == 0 else base * t / (1 - (1 + t) ** -n), 2)
+
+
+def calibrer_base(echeance: float, t: float, n: int, constates: list[float]) -> float:
+    """Capital amorti correspondant à une échéance connue.
+
+    Sans données comptables : valeur actuelle des échéances. Avec les remboursements de capital du
+    grand livre : milieu de la plage de capitaux (au centime) qui les reproduit exactement.
+    """
+    base = round(echeance * n if t == 0 else echeance * (1 - (1 + t) ** -n) / t, 2)
+    if not constates:
+        return base
+    compatibles = [
+        c / 100
+        for c in range(round(base * 100) - 1000, round(base * 100) + 1000)
+        if [a for _, a in tableau_constant(c / 100, echeance, t, n)[: len(constates)]] == constates
+        and echeance_pour(c / 100, t, n) == echeance
+    ]
+    return compatibles[len(compatibles) // 2] if compatibles else base
+
+
+def calculer(p: ParametresPret) -> Resultat:
+    """Échéancier complet : différé puis amortissement du capital (+ intérêts capitalisés)."""
+    n, t = p.nb_echeances_amortissement, p.taux_periodique
+    if n <= 0:
+        raise ValueError("Le nombre d'échéances doit être supérieur au nombre d'échéances de différé.")
+    dates = dates_echeances(p)
+    interets = interets_differe(p, dates)
+    calcules = round(sum(interets), 2) if p.interets_differe_capitalises else 0.0
+
+    capitalises = calcules
+    if p.interets_differe_capitalises and p.interets_capitalises_imposes is not None:
+        capitalises = round(p.interets_capitalises_imposes, 2)
+    base = round(p.capital + capitalises, 2)
+
+    echeance = None
+    if p.type_remboursement == "Amortissement constant":
+        amortissements = repartir(base, n)
+        lignes_amort, restant = [], base
+        for a in amortissements:
+            lignes_amort.append((round(restant * t, 2), a))
+            restant = round(restant - a, 2)
+    else:
+        if p.echeance_imposee:
+            echeance = round(p.echeance_imposee, 2)
+            if p.interets_differe_capitalises and p.interets_capitalises_imposes is None:
+                # L'échéance de la banque fixe le capital amorti, donc les intérêts capitalisés.
+                base = calibrer_base(echeance, t, n, p.remboursements_constates)
+                capitalises = round(base - p.capital, 2)
+        else:
+            echeance = echeance_pour(base, t, n)
+        lignes_amort = tableau_constant(base, echeance, t, n)
+
+    if p.interets_differe_capitalises and interets:
+        # L'écart entre intérêts retenus et calculés est porté sur la dernière échéance de différé.
+        interets[-1] = round(interets[-1] + capitalises - calcules, 2)
+
+    assurances = repartir(p.montant_total_assurance, p.nb_echeances)
+    frais = repartir(p.montant_total_autres_frais, p.nb_echeances)
+    lignes, solde = [], p.capital
+    for k, d in enumerate(dates):
+        if k < p.nb_echeances_differe:
+            interet = interets[k]
+            amort = -interet if p.interets_differe_capitalises else 0.0
+        else:
+            interet, amort = lignes_amort[k - p.nb_echeances_differe]
+        solde = round(solde - amort, 2)
+        paye = round(interet + amort, 2)  # nul pendant un différé capitalisé
+        lignes.append([d, interet, assurances[k], frais[k], amort, round(paye + assurances[k] + frais[k], 2), solde])
+    return Resultat(pd.DataFrame(lignes, columns=COLONNES), base, calcules, capitalises, echeance)
+
+
+def calculer_echeancier(p: ParametresPret) -> pd.DataFrame:
+    return calculer(p).echeancier
 
 
 def exporter_pennylane(p: ParametresPret, echeancier: pd.DataFrame) -> bytes:
