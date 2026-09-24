@@ -22,7 +22,8 @@ L'écran se remplit en deux étapes ; l'échéancier se génère dès que les in
    bloquent la génération de l'échéancier.
    **Déblocages après la 1re échéance de remboursement du capital** (plusieurs déblocages) : l'option
    n'apparaît que dans ce cas. Jusqu'au dernier déblocage, les échéances sont au choix
-   - *totales* : calculées sur la totalité du prêt dès la 1re échéance (cas du prêt n°141) ;
+   - *totales* : capital remboursé selon le tableau du prêt complet dès la 1re échéance, intérêts sur les
+     seuls fonds versés (cas du prêt n°141) ;
    - *proratisées* : réduites au prorata des fonds déjà versés, intérêts sur le capital réellement versé,
      puis échéance recalculée après le dernier déblocage pour solder le prêt au terme.
 2. **Les déblocages** : import du grand livre du compte 164 exporté de Pennylane (recommandé : les
@@ -71,6 +72,8 @@ Règles déduites du grand livre d'un prêt Crédit Agricole à déblocages succ
     l'échéance et calé sur le grand livre importé.
   - Exemple du prêt n°141 : échéance 468,45 €, capital restant dû de 21 859,20 € au 08/09/2026 →
     185,76 € d'intérêts capitalisés, tableau bancaire reproduit au centime.
+- Le **solde** et les **intérêts** portent toujours sur le capital réellement versé à chaque date :
+  un déblocage postérieur augmente le solde à la date où il intervient.
 - Dans le fichier Pennylane, les intérêts capitalisés apparaissent en **amortissement négatif**
   (échéance à 0, le solde augmente), ce qui garde un solde cohérent depuis le capital de l'en-tête.
 - Dates au format français (jj/mm/aaaa) dans l'application et dans le fichier exporté.

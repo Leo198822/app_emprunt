@@ -269,7 +269,8 @@ if len(deblocages) > 1 and premier_paiement and nb_echeances and type_remboursem
         echeance_proratisee = st.radio(
             "Échéances avant le dernier déblocage",
             [
-                "totales : calculées sur la totalité du prêt dès la 1re échéance",
+                "totales : capital remboursé selon le tableau du prêt complet dès la 1re échéance "
+                "(intérêts sur les seuls fonds versés)",
                 "proratisées : réduites au prorata des fonds déjà versés, puis recalculées après le dernier déblocage",
             ],
             key=cle("echeance_proratisee"),

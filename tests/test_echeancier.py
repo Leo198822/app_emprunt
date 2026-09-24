@@ -71,10 +71,11 @@ def test_differe_capitalise():
     assert e["Amortissement (€)"].iloc[:3].tolist() == pytest.approx((-e["Intérêt (€)"].iloc[:3]).tolist())
     assert e["Échéance (€)"].iloc[:3].tolist() == [0, 0, 0]
     assert r.capital_amorti == pytest.approx(24_000 + r.interets_capitalises_calcules)
-    assert e["Solde (€)"].iloc[2] == pytest.approx(r.capital_amorti)
+    # Solde au 05/03/2026 : fonds réellement versés (21 672,72 €) + intérêts ajoutés au capital.
+    assert e["Solde (€)"].iloc[2] == pytest.approx(21_672.72 + r.interets_capitalises_calcules)
     assert e["Solde (€)"].iloc[-1] == pytest.approx(0)
-    # Échéances constantes ensuite.
-    assert e["Échéance (€)"].iloc[3:-1].nunique() == 1
+    # Échéances constantes une fois tous les fonds versés (dernier déblocage le 24/06/2026).
+    assert e["Échéance (€)"].iloc[7:-1].nunique() == 1
 
 
 def test_differe_paye():
@@ -121,7 +122,7 @@ def test_calage_sur_le_grand_livre():
     _, remboursements = lire_grand_livre(GRAND_LIVRE)
     r = calculer(pret_banque(468.45, remboursements["Capital remboursé (€)"]))
     assert comparer(r.echeancier, remboursements)["Écart (€)"].abs().max() == 0
-    assert set(r.echeancier["Échéance (€)"].iloc[3:-1]) == {468.45}
+    assert set(r.echeancier["Échéance (€)"].iloc[7:-1]) == {468.45}
     assert abs(r.capital_amorti - 24_185.76) < 0.2
 
 
@@ -145,6 +146,17 @@ def test_ajustement_sur_le_capital_restant_du_de_la_banque():
     for rang, attendu in TABLEAU_BANQUE.items():
         ligne = e.iloc[rang - 1]
         assert (ligne["Intérêt (€)"], ligne["Amortissement (€)"], ligne["Solde (€)"]) == pytest.approx(attendu, abs=0.001)
+
+
+def test_solde_reel_egal_au_grand_livre_plus_interets_capitalises():
+    """Le solde suit les déblocages : il égale à chaque date le solde du compte 164 + 185,76 € capitalisés."""
+    p = pret_banque(468.45)
+    p.interets_capitalises_imposes = 185.76
+    e = calculer_echeancier(p)
+    grand_livre = {date(2026, 4, 5): 21_288.32, date(2026, 5, 5): 20_902.58, date(2026, 6, 5): 21_235.93,
+                   date(2026, 7, 5): 22_454.35, date(2026, 8, 5): 22_064.57, date(2026, 9, 5): 21_673.44}
+    for jour, solde_164 in grand_livre.items():
+        assert e.loc[e["Date"] == jour, "Solde (€)"].iloc[0] == pytest.approx(solde_164 + 185.76)
 
 
 def test_ajustement_sans_differe_recalcule_l_echeance():
@@ -271,7 +283,14 @@ def pret_deux_deblocages(**options):
 
 def test_echeances_totales_par_defaut():
     e = calculer_echeancier(pret_deux_deblocages())
-    assert set(e["Échéance (€)"].iloc[:-1]) == {434.25}  # 10 000 € sur 24 mois dès la 1re échéance
+    # Capital amorti selon le tableau du prêt complet (10 000 € sur 24 mois) dès la 1re échéance…
+    theorique = calculer_echeancier(pret_deux_deblocages(deblocages=[Deblocage(date(2025, 12, 10), 10_000)]))
+    assert e["Amortissement (€)"].tolist() == theorique["Amortissement (€)"].tolist()
+    # … mais intérêts et solde sur les seuls fonds versés : 6 000 € jusqu'au 20/03/2026.
+    assert e["Intérêt (€)"].iloc[0] == pytest.approx(6_000 * 0.04 * 26 / 365, abs=0.01)
+    assert e["Solde (€)"].iloc[0] == pytest.approx(6_000 - e["Amortissement (€)"].iloc[0])
+    assert e["Échéance (€)"].iloc[0] < 434.25
+    assert set(e["Échéance (€)"].iloc[4:-1]) == {434.25}  # tout est versé : échéance du prêt complet
 
 
 def test_echeances_proratisees_jusqu_au_dernier_deblocage():

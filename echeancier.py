@@ -7,8 +7,9 @@ Principe (constaté sur le grand livre d'un prêt Crédit Agricole à déblocage
   **échéances constantes**, comme un prêt classique, quelles que soient les dates des derniers déblocages ;
 - pendant l'amortissement, les intérêts sont calculés à taux / 12 sur le capital restant dû
   (vérifié au centime sur le tableau bancaire) ; une option permet les jours exacts / 365 ;
-- **déblocages après la 1re échéance d'amortissement** : échéances calculées sur la totalité du prêt
-  (banque du prêt n°141), ou proratisées aux fonds versés jusqu'au dernier déblocage ;
+- **déblocages après la 1re échéance d'amortissement** : capital amorti selon le tableau du prêt complet
+  (banque du prêt n°141), ou échéances proratisées aux fonds versés jusqu'au dernier déblocage ; dans
+  les deux cas, intérêts et solde portent sur le capital réellement versé à chaque date ;
 - **déblocage partiel** : l'échéancier porte sur le montant débloqué, soit avec l'échéance du prêt
   complet (le capital est soldé plus tôt ; les échéances suivantes restent jusqu'au terme, à 0 hors
   assurance), soit avec une échéance réduite étalée sur toute la durée.
@@ -211,6 +212,21 @@ def tableau_constant(base: float, echeance: float, facteurs: list[float]) -> lis
     return lignes
 
 
+def non_verse(p: ParametresPret, jour: date) -> float:
+    """Fonds du prêt pas encore versés à une date (0 si aucun déblocage n'est renseigné)."""
+    if not p.deblocages:
+        return 0.0
+    return max(round(p.capital_effectif - sum(d.montant for d in p.deblocages if d.date <= jour), 2), 0.0)
+
+
+def interet_reel(p: ParametresPret, crd_theorique: float, debut: date, fin: date, facteur: float) -> float:
+    """Intérêts d'une période sur le capital réellement versé : fonds versés avant la période sur la période
+    entière, fonds versés pendant la période au prorata des jours jusqu'à l'échéance."""
+    interet = (crd_theorique - non_verse(p, debut)) * facteur
+    interet += sum(d.montant * p.taux / 100 * (fin - d.date).days / BASE_JOURS for d in p.deblocages if debut < d.date <= fin)
+    return round(interet, 2)
+
+
 def tableau_proratise(
     p: ParametresPret, dates: list[date], base: float, echeance: float, facteurs: list[float]
 ) -> list[tuple[float, float]]:
@@ -220,23 +236,16 @@ def tableau_proratise(
     portent sur le capital réellement versé (prorata des jours pour un déblocage en cours de période).
     Après le dernier déblocage, l'échéance est recalculée sur le capital restant dû pour finir au terme.
     """
-    k0, n, r = p.nb_echeances_differe, len(facteurs), p.taux / 100
-    deblocages = sorted(p.deblocages, key=lambda d: d.date)
-
-    def non_verse(jour: date) -> float:
-        return max(p.capital_effectif - sum(d.montant for d in deblocages if d.date <= jour), 0.0)
-
+    k0, n = p.nb_echeances_differe, len(facteurs)
     debut = dates[k0 - 1] if k0 else ajouter_mois(dates[0], -p.mois_par_periode, p.jour_prelevement)
     lignes, restant, echeance_finale = [], base, None
     for k, (fin, facteur) in enumerate(zip(dates[k0 : k0 + n], facteurs)):
-        reste_a_verser = non_verse(fin)
+        reste_a_verser = non_verse(p, fin)
         if k == n - 1:
-            interet, a = round((restant - reste_a_verser) * facteur, 2), restant
-        elif reste_a_verser > 0.005 or non_verse(debut) > 0.005:
+            interet, a = interet_reel(p, restant, debut, fin, facteur), restant
+        elif reste_a_verser > 0.005 or non_verse(p, debut) > 0.005:
             # Période touchée par des fonds non encore versés : échéance et intérêts au prorata.
-            interet = (restant - non_verse(debut)) * facteur
-            interet += sum(d.montant * r * (fin - d.date).days / BASE_JOURS for d in deblocages if debut < d.date <= fin)
-            interet = round(interet, 2)
+            interet = interet_reel(p, restant, debut, fin, facteur)
             a = round(round(echeance * (base - reste_a_verser) / base, 2) - interet, 2)
         else:
             if echeance_finale is None:
@@ -287,6 +296,12 @@ def calculer(p: ParametresPret) -> Resultat:
     base = round(p.capital_effectif + capitalises, 2)
 
     echeance = None
+    proratise = (
+        p.echeance_proratisee
+        and p.type_remboursement == "Échéances constantes"
+        and bool(p.deblocages)
+        and max(d.date for d in p.deblocages) > dates[p.nb_echeances_differe]
+    )
     if p.type_remboursement == "Amortissement constant":
         amortissements = repartir(base, n)
         lignes_amort, restant = [], base
@@ -306,7 +321,7 @@ def calculer(p: ParametresPret) -> Resultat:
             echeance = echeance_pour(round(p.capital + capitalises, 2), t, n)
         else:
             echeance = echeance_pour(base, t, n)
-        if p.echeance_proratisee and p.deblocages and max(d.date for d in p.deblocages) > dates[p.nb_echeances_differe]:
+        if proratise:
             lignes_amort = tableau_proratise(p, dates, base, echeance, facteurs)
         else:
             lignes_amort = tableau_constant(base, echeance, facteurs)
@@ -318,17 +333,26 @@ def calculer(p: ParametresPret) -> Resultat:
     # Capital soldé avant la fin (déblocage partiel, échéance maintenue) : les échéances suivantes
     # restent dans l'échéancier, à 0 hors assurance et frais, jusqu'au terme prévu du prêt.
     frais = repartir(p.montant_total_autres_frais, p.nb_echeances)
+    # Le tableau théorique porte sur la totalité du prêt ; le solde affiché et les intérêts portent sur le
+    # capital réellement versé à chaque date (les fonds non encore débloqués n'en font pas partie).
     lignes, solde = [], p.capital_effectif
+    debut = ajouter_mois(dates[0], -p.mois_par_periode, p.jour_prelevement)
     for k, d in enumerate(dates):
+        crd_debut = round(solde - non_verse(p, debut), 2)
         if k < p.nb_echeances_differe:
             interet = interets[k]
             amort = -interet if p.interets_differe_capitalises else 0.0
         else:
             interet, amort = lignes_amort[k - p.nb_echeances_differe]
-        assurance = p.assurance_sur(solde)  # capital restant dû en début de période
+            fonds_en_attente = non_verse(p, debut) > 0.005 or any(debut < x.date <= d for x in p.deblocages)
+            if fonds_en_attente and not proratise:
+                interet = interet_reel(p, solde, debut, d, facteurs[k - p.nb_echeances_differe])
+        assurance = p.assurance_sur(crd_debut)  # capital restant dû réel en début de période
         solde = round(solde - amort, 2)
         paye = round(interet + amort, 2)  # nul pendant un différé capitalisé
-        lignes.append([d, interet, assurance, frais[k], amort, round(paye + assurance + frais[k], 2), solde])
+        solde_reel = round(solde - non_verse(p, d), 2)
+        lignes.append([d, interet, assurance, frais[k], amort, round(paye + assurance + frais[k], 2), solde_reel])
+        debut = d
     echeancier = pd.DataFrame(lignes, columns=COLONNES)
     soldees = [k + 1 for k in range(p.nb_echeances_differe, len(lignes)) if lignes[k][6] <= 0.005]
     return Resultat(echeancier, base, calcules, capitalises, echeance, soldees[0] if soldees else len(lignes))
