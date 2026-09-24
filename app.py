@@ -36,19 +36,30 @@ def remettre_a_zero() -> None:
 
 
 def editer_deblocages(initial: pd.DataFrame, cle_tableau: str) -> list[Deblocage]:
-    """Tableau modifiable des déblocages : correction des cellules, ajout et suppression de lignes."""
+    """Tableau modifiable des déblocages : correction des cellules, ajout de lignes et case « Supprimer »."""
+    st.caption(
+        "✏️ **Corriger** : double-cliquez sur une date ou un montant.  \n"
+        "🗑️ **Supprimer** : cochez la case de la colonne « Supprimer » (décochez-la pour reprendre la ligne).  \n"
+        "➕ **Ajouter** : remplissez la ligne vide en bas du tableau."
+    )
     saisie = st.data_editor(
-        initial,
+        initial.assign(Supprimer=False),
         key=cle_tableau,
         num_rows="dynamic",
         width="stretch",
+        hide_index=True,
         column_config={
             "Date": st.column_config.DateColumn("Date du déblocage", format="DD/MM/YYYY", required=True),
             "Montant (€)": st.column_config.NumberColumn("Montant (€)", min_value=0.0, format="%.2f", required=True),
+            "Supprimer": st.column_config.CheckboxColumn("🗑️ Supprimer", default=False, width="small"),
         },
     )
+    saisie = saisie.dropna(subset=["Date", "Montant (€)"])
+    supprimees = saisie["Supprimer"].fillna(False).astype(bool)
+    if supprimees.any():
+        st.caption(f"{int(supprimees.sum())} ligne(s) supprimée(s) : elles ne sont pas prises en compte dans le calcul.")
     return sorted(
-        (Deblocage(pd.Timestamp(r["Date"]).date(), round(float(r["Montant (€)"]), 2)) for _, r in saisie.dropna().iterrows()),
+        (Deblocage(pd.Timestamp(r["Date"]).date(), round(float(r["Montant (€)"]), 2)) for _, r in saisie[~supprimees].iterrows()),
         key=lambda d: d.date,
     )
 
@@ -213,14 +224,9 @@ if source.startswith("Importer"):
             st.error(f"Lecture du grand livre impossible : {erreur}")
         else:
             texte, bouton_annuler = st.columns([3, 1], vertical_alignment="center")
-            texte.caption(
-                f"{len(importes)} déblocage(s) repéré(s) dans le grand livre. Pour corriger une date ou un montant : "
-                "double-clic sur la cellule. Pour supprimer des lignes : cliquez dans la colonne de gauche (Maj ou Ctrl "
-                "pour en sélectionner plusieurs), puis touche Suppr ou corbeille en haut à droite du tableau. "
-                "Pour en ajouter : ligne vide en bas."
-            )
+            texte.markdown(f"**{len(importes)} déblocage(s) repéré(s) dans le grand livre**, modifiables ci-dessous :")
             if bouton_annuler.button(
-                "↺ Annuler les modifications", help="Revient aux déblocages repérés dans le grand livre.", width="stretch"
+                "↺ Annuler", help="Annule vos modifications et revient aux déblocages repérés dans le grand livre.", width="stretch"
             ):
                 st.session_state["versions_deblocages"] = st.session_state.get("versions_deblocages", 0) + 1
             deblocages = editer_deblocages(
