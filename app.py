@@ -35,6 +35,24 @@ def remettre_a_zero() -> None:
     st.session_state["reinitialisations"] = st.session_state.get("reinitialisations", 0) + 1
 
 
+def editer_deblocages(initial: pd.DataFrame, cle_tableau: str) -> list[Deblocage]:
+    """Tableau modifiable des déblocages : correction des cellules, ajout et suppression de lignes."""
+    saisie = st.data_editor(
+        initial,
+        key=cle_tableau,
+        num_rows="dynamic",
+        width="stretch",
+        column_config={
+            "Date": st.column_config.DateColumn("Date du déblocage", format="DD/MM/YYYY", required=True),
+            "Montant (€)": st.column_config.NumberColumn("Montant (€)", min_value=0.0, format="%.2f", required=True),
+        },
+    )
+    return sorted(
+        (Deblocage(pd.Timestamp(r["Date"]).date(), round(float(r["Montant (€)"]), 2)) for _, r in saisie.dropna().iterrows()),
+        key=lambda d: d.date,
+    )
+
+
 def tableau_euros(df: pd.DataFrame):
     affiche = df.copy()
     affiche["Date"] = pd.to_datetime(affiche["Date"]).dt.strftime("%d/%m/%Y")
@@ -190,26 +208,30 @@ if source.startswith("Importer"):
     )
     if grand_livre is not None:
         try:
-            deblocages, remboursements = lire_grand_livre(grand_livre)
-            st.dataframe(
-                pd.DataFrame([{"Date": d.date.strftime("%d/%m/%Y"), "Montant (€)": d.montant} for d in deblocages]).style.format(
-                    {"Montant (€)": nombre}
-                ),
-                hide_index=True,
-            )
+            importes, remboursements = lire_grand_livre(grand_livre)
         except Exception as erreur:  # fichier inattendu
             st.error(f"Lecture du grand livre impossible : {erreur}")
+        else:
+            texte, bouton_annuler = st.columns([3, 1], vertical_alignment="center")
+            texte.caption(
+                f"{len(importes)} déblocage(s) repéré(s) dans le grand livre. Pour corriger une date ou un montant : "
+                "double-clic sur la cellule. Pour supprimer des lignes : cliquez dans la colonne de gauche (Maj ou Ctrl "
+                "pour en sélectionner plusieurs), puis touche Suppr ou corbeille en haut à droite du tableau. "
+                "Pour en ajouter : ligne vide en bas."
+            )
+            if bouton_annuler.button(
+                "↺ Annuler les modifications", help="Revient aux déblocages repérés dans le grand livre.", width="stretch"
+            ):
+                st.session_state["versions_deblocages"] = st.session_state.get("versions_deblocages", 0) + 1
+            deblocages = editer_deblocages(
+                pd.DataFrame({"Date": pd.to_datetime([d.date for d in importes]), "Montant (€)": [d.montant for d in importes]}),
+                # Nouvelle clé pour chaque fichier importé (ou retour au grand livre) : le tableau repart des lignes repérées.
+                cle(f"deblocages_{grand_livre.name}_{grand_livre.size}_{st.session_state.get('versions_deblocages', 0)}"),
+            )
 elif source.startswith("Saisir"):
-    saisie = st.data_editor(
-        pd.DataFrame({"Date": pd.Series(dtype="datetime64[ns]"), "Montant (€)": pd.Series(dtype="float")}), key=cle("saisie"),
-        num_rows="dynamic",
-        width="stretch",
-        column_config={
-            "Date": st.column_config.DateColumn("Date du déblocage", format="DD/MM/YYYY", required=True),
-            "Montant (€)": st.column_config.NumberColumn("Montant (€)", min_value=0.0, format="%.2f", required=True),
-        },
+    deblocages = editer_deblocages(
+        pd.DataFrame({"Date": pd.Series(dtype="datetime64[ns]"), "Montant (€)": pd.Series(dtype="float")}), cle("saisie")
     )
-    deblocages = [Deblocage(pd.Timestamp(r["Date"]).date(), float(r["Montant (€)"])) for _, r in saisie.dropna().iterrows()]
 elif partiel:
     montant_unique = st.number_input(
         "Montant débloqué (€)", key=cle("montant_unique"), min_value=0.0, value=None, step=100.0, format="%.2f", placeholder="ex. 7 500,00"
@@ -292,7 +314,11 @@ manquants = [
 if partiel and not montant_debloque:
     manquants.append("le montant débloqué")
 if source.startswith("Importer") and not deblocages:
-    manquants.append("le grand livre (ou choisissez une autre façon de renseigner les déblocages)")
+    manquants.append(
+        "au moins un déblocage (importez le grand livre ou ajoutez une ligne au tableau)"
+        if grand_livre is not None
+        else "le grand livre (ou choisissez une autre façon de renseigner les déblocages)"
+    )
 if manquants:
     st.info("Pour générer l'échéancier, renseignez : " + ", ".join(manquants) + ".")
     st.stop()

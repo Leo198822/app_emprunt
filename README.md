@@ -27,7 +27,8 @@ L'écran se remplit en deux étapes ; l'échéancier se génère dès que les in
    - *proratisées* : réduites au prorata des fonds déjà versés, intérêts sur le capital réellement versé,
      puis échéance recalculée après le dernier déblocage pour solder le prêt au terme.
 2. **Les déblocages** : import du grand livre du compte 164 exporté de Pennylane (recommandé : les
-   remboursements comptabilisés servent aussi de contrôle), saisie manuelle, ou fonds versés en une fois
+   remboursements comptabilisés servent aussi de contrôle ; les déblocages repérés s'affichent dans un
+   tableau modifiable pour corriger, supprimer ou ajouter des lignes), saisie manuelle, ou fonds versés en une fois
    (en déblocage partiel, saisir alors le montant débloqué). Le total des déblocages est affiché.
 3. **Ajustement (facultatif)** : sous l'échéancier, saisir une date et le capital restant dû connu à
    cette date (tableau de la banque, relevé…). L'échéancier est recalculé pour retomber exactement
