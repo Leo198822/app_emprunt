@@ -53,7 +53,8 @@ class ParametresPret:
     interets_capitalises_imposes: float | None = None  # montant du tableau bancaire, si connu
     periodicite: str = "Mensuelle"
     type_remboursement: str = "Échéances constantes"  # ou "Amortissement constant"
-    echeance_imposee: float | None = None  # échéance hors assurance de l'offre bancaire, si connue
+    echeance_imposee: float | None = None  # échéance de l'offre bancaire, si connue
+    echeance_assurance_comprise: bool = False  # True : l'échéance imposée inclut l'assurance
     remboursements_constates: list[float] = field(default_factory=list)  # capital remboursé (grand livre)
     interets_jours_exacts: bool = False  # amortissement : taux / 12 (banque) ; True : jours exacts / 365
     assurance_mensuelle: float = 0.0  # montant fixe : coût mensuel de l'assurance, jusqu'au terme du prêt
@@ -311,6 +312,9 @@ def calculer(p: ParametresPret) -> Resultat:
     else:
         if p.echeance_imposee:
             echeance = round(p.echeance_imposee, 2)
+            if p.echeance_assurance_comprise:
+                # Échéance saisie assurance comprise : on retire l'assurance de la 1re échéance d'amortissement.
+                echeance = round(echeance - p.assurance_sur(base), 2)
             if p.interets_differe_capitalises and p.interets_capitalises_imposes is None:
                 # L'échéance de la banque fixe le capital amorti, donc les intérêts capitalisés.
                 if not p.partiel:

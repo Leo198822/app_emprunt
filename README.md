@@ -9,8 +9,8 @@ L'écran se remplit en deux étapes ; l'échéancier se génère dès que les in
 
 1. **Le prêt** (offre de prêt) : montant emprunté, taux, date de la 1re échéance, **périodicité**
    (mensuelle, trimestrielle, semestrielle, annuelle), type de remboursement, nombre total
-   d'échéances, dont échéances de différé, et — facultatif — le montant de l'échéance indiqué par la
-   banque. Si un différé est saisi : intérêts ajoutés au capital ou prélevés.
+   d'échéances, dont échéances de différé, et — facultatif — le montant de l'échéance prélevée par la
+   banque, **assurance comprise** (l'application en retire l'assurance saisie dans les Options). Si un différé est saisi : intérêts ajoutés au capital ou prélevés.
    **Emprunt débloqué en totalité ou partiellement** : en partiel, l'échéancier porte sur le montant
    réellement débloqué, au choix
    - *échéance du prêt complet maintenue* : le capital est soldé plus tôt (ex. prêt de 10 000 € sur
@@ -46,7 +46,7 @@ d'import (même structure que `modeles/Echeancier_type.xlsx`, dates au format jj
 |---|---|
 | Montant emprunté / taux | 24 000,00 € / 4,170 % |
 | Date de la 1re échéance | 05/01/2026 |
-| Échéance hors assurance | 468,45 € |
+| Échéance assurance comprise | 468,45 € (sans assurance) |
 | Nombre total d'échéances / dont différé | 60 / 3 (intérêts ajoutés au capital) |
 | Déblocages | grand livre `tests/grand_livre_exemple.xlsx` |
 | Ajustement : date / capital restant dû | 08/09/2026 / 21 859,20 € |

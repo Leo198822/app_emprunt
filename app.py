@@ -68,13 +68,14 @@ periodicite = c2.selectbox("Périodicité des échéances", list(PERIODICITES), 
 
 c1, c2 = st.columns(2)
 echeance_banque = c1.number_input(
-    "Montant de l'échéance hors assurance (€)", key=cle("echeance_banque"),
+    "Montant de l'échéance assurance comprise (€)", key=cle("echeance_banque"),
     min_value=0.0,
     value=None,
     step=0.01,
     format="%.2f",
-    placeholder="facultatif — ex. 468,45",
-    help="Échéance constante indiquée par la banque. Si vous la laissez vide, elle est calculée.",
+    placeholder="facultatif — ex. 480,95",
+    help="Échéance prélevée par la banque, assurance comprise (renseignez l'assurance dans les Options). "
+    "L'application en déduit l'échéance hors assurance. Si vous la laissez vide, elle est calculée.",
 )
 type_remboursement = c2.selectbox(
     "Type de remboursement", ["Échéances constantes", "Amortissement constant"], key=cle("type_remboursement")
@@ -310,6 +311,7 @@ params = ParametresPret(
     deblocages=deblocages,
     interets_differe_capitalises=interets_capitalises,
     echeance_imposee=echeance_banque or None,
+    echeance_assurance_comprise=True,
     remboursements_constates=[] if remboursements is None else remboursements["Capital remboursé (€)"].tolist(),
     periodicite=periodicite,
     type_remboursement=type_remboursement,
@@ -342,7 +344,7 @@ with st.expander("🎯 Ajuster sur un capital restant dû connu (facultatif)"):
             detail = (
                 f"intérêts ajoutés au capital pendant le différé : {euros(params.interets_capitalises_imposes)}"
                 if ajustement.levier == "intérêts capitalisés"
-                else f"échéance recalculée : {euros(params.echeance_imposee)}"
+                else f"échéance recalculée, assurance comprise : {euros(params.echeance_imposee)}"
             )
             message = (
                 f"Échéancier recalculé ({detail}). Capital restant dû après l'échéance du "
@@ -375,6 +377,12 @@ if rang < len(echeancier):
         f"Capital soldé à l'échéance n°{rang} ({echeancier['Date'].iloc[rang - 1].strftime('%d/%m/%Y')}). "
         f"Les {reste} échéance{'s' if reste > 1 else ''} suivante{'s' if reste > 1 else ''}, jusqu'au "
         f"{echeancier['Date'].iloc[-1].strftime('%d/%m/%Y')}, restent dans l'échéancier à 0 € hors assurance et frais."
+    )
+
+if params.echeance_imposee and resultat.echeance_constante and (params.assurance_mensuelle or params.assurance_taux_crd):
+    st.caption(
+        f"Échéance hors assurance déduite de l'échéance saisie ({euros(params.echeance_imposee)}) : "
+        f"{euros(resultat.echeance_constante)}."
     )
 
 if params.nb_echeances_differe and interets_capitalises:

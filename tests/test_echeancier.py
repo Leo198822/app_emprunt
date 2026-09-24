@@ -226,6 +226,24 @@ def test_assurance_en_pourcentage_trimestrielle_et_export(tmp_path):
     assert ws["D2"].value == pytest.approx(round(e["Assurance (€)"].sum(), 2))
 
 
+def test_echeance_saisie_assurance_comprise():
+    """468,45 € hors assurance + 12,50 € d'assurance = 480,95 € saisis : même tableau que le prêt n°141."""
+    hors_assurance = pret_banque(468.45)
+    hors_assurance.assurance_mensuelle = 12.5
+    comprise = replace(hors_assurance, echeance_imposee=480.95, echeance_assurance_comprise=True)
+    e1, e2 = calculer_echeancier(hors_assurance), calculer_echeancier(comprise)
+    assert e2.equals(e1)
+    assert set(e2["Échéance (€)"].iloc[3:-1]) == {480.95}
+
+
+def test_echeance_assurance_comprise_en_pourcentage_du_crd():
+    p = pret_partiel(montant_debloque=None, echeance_imposee=145.61, echeance_assurance_comprise=True, assurance_taux_crd=0.36)
+    e = calculer_echeancier(p)
+    # 1re échéance : 142,61 € de crédit + 3,00 € d'assurance (10 000 € x 0,36 % / 12).
+    assert e["Échéance (€)"].iloc[0] == pytest.approx(145.61)
+    assert e["Intérêt (€)"].iloc[0] + e["Amortissement (€)"].iloc[0] == pytest.approx(142.61)
+
+
 def test_assurance_mensuelle_ramenee_a_la_periodicite():
     e = calculer_echeancier(pret_partiel(assurance_mensuelle=12.5, periodicite="Trimestrielle", nb_echeances=27))
     assert set(e["Assurance (€)"]) == {37.50}  # 3 mois x 12,50 €
