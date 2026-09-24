@@ -184,10 +184,16 @@ def test_partiel_echeance_maintenue_solde_le_capital_plus_tot():
 
 
 def test_partiel_l_assurance_continue_apres_le_solde_du_capital():
-    e = calculer_echeancier(pret_partiel(assurance=0.36, assurance_en_pourcentage=True))
+    e = calculer_echeancier(pret_partiel(assurance_mensuelle=3.0))
     assert len(e) == 80
-    assert set(e["Assurance (€)"]) == {3.00}  # 10 000 € x 0,36 % / 12, sur toute la durée
+    assert set(e["Assurance (€)"]) == {3.00}  # coût mensuel saisi, sur toute la durée
     assert (e["Échéance (€)"].iloc[58:] == 3.00).all()
+
+
+def test_assurance_mensuelle_ramenee_a_la_periodicite():
+    e = calculer_echeancier(pret_partiel(assurance_mensuelle=12.5, periodicite="Trimestrielle", nb_echeances=27))
+    assert set(e["Assurance (€)"]) == {37.50}  # 3 mois x 12,50 €
+    assert e["Échéance (€)"].iloc[0] == pytest.approx(e["Intérêt (€)"].iloc[0] + e["Amortissement (€)"].iloc[0] + 37.50)
 
 
 def test_partiel_duree_maintenue_reduit_l_echeance():

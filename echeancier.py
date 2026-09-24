@@ -53,8 +53,7 @@ class ParametresPret:
     echeance_imposee: float | None = None  # échéance hors assurance de l'offre bancaire, si connue
     remboursements_constates: list[float] = field(default_factory=list)  # capital remboursé (grand livre)
     interets_jours_exacts: bool = False  # amortissement : taux / 12 (banque) ; True : jours exacts / 365
-    assurance: float = 0.0
-    assurance_en_pourcentage: bool = False  # True : taux annuel sur le capital ; False : montant total
+    assurance_mensuelle: float = 0.0  # coût mensuel de l'assurance, prélevé jusqu'au terme du prêt
     autres_frais: float = 0.0
     autres_frais_en_pourcentage: bool = False  # True : % du capital ; False : montant total
     montant_debloque: float | None = None  # déblocage partiel : montant réellement versé (None = en totalité)
@@ -83,11 +82,13 @@ class ParametresPret:
         return self.nb_echeances - self.nb_echeances_differe
 
     @property
+    def assurance_par_echeance(self) -> float:
+        """Coût mensuel de l'assurance ramené à la périodicité (× 3 en trimestriel, × 12 en annuel…)."""
+        return round(self.assurance_mensuelle * self.mois_par_periode, 2)
+
+    @property
     def montant_total_assurance(self) -> float:
-        if self.assurance_en_pourcentage:
-            par_echeance = round(self.capital * self.assurance / 100 * self.mois_par_periode / 12, 2)
-            return round(par_echeance * self.nb_echeances, 2)
-        return round(self.assurance, 2)
+        return round(self.assurance_par_echeance * self.nb_echeances, 2)
 
     @property
     def montant_total_autres_frais(self) -> float:
@@ -97,7 +98,7 @@ class ParametresPret:
 
     @property
     def taux_assurance(self) -> float:
-        return self.assurance if self.assurance_en_pourcentage else 0.0
+        return 0.0  # l'assurance est saisie en montant : seul le montant total figure en en-tête
 
     @property
     def pourcentage_autres_frais(self) -> float:
@@ -268,7 +269,7 @@ def calculer(p: ParametresPret) -> Resultat:
 
     # Capital soldé avant la fin (déblocage partiel, échéance maintenue) : les échéances suivantes
     # restent dans l'échéancier, à 0 hors assurance et frais, jusqu'au terme prévu du prêt.
-    assurances = repartir(p.montant_total_assurance, p.nb_echeances)
+    assurances = [p.assurance_par_echeance] * p.nb_echeances
     frais = repartir(p.montant_total_autres_frais, p.nb_echeances)
     lignes, solde = [], p.capital_effectif
     for k, d in enumerate(dates):

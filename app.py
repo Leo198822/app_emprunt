@@ -89,6 +89,19 @@ nb_differe = c2.number_input(
     help="Premières échéances sans remboursement de capital, pendant le déblocage des fonds.",
 )
 
+c1, _ = st.columns(2)
+assurance_mensuelle = c1.number_input(
+    "Coût mensuel de l'assurance (€)",
+    key=cle("assurance_mensuelle"),
+    min_value=0.0,
+    value=None,
+    step=0.01,
+    format="%.2f",
+    placeholder="facultatif — ex. 12,50",
+    help="Montant prélevé chaque mois. En périodicité trimestrielle, semestrielle ou annuelle, il est multiplié "
+    "par le nombre de mois de la période. L'assurance court jusqu'au terme du prêt.",
+)
+
 interets_capitalises = True
 if nb_differe:
     interets_capitalises = st.radio(
@@ -205,12 +218,10 @@ elif deblocages:
         st.warning(f"{libelle} — il manque {euros(capital - total)} pour atteindre le montant emprunté ({euros(capital)}).")
 
 # --- Options -----------------------------------------------------------------------------
-with st.expander("Options (assurance, frais, calcul des intérêts)"):
-    c1, c2, c3, c4 = st.columns([3, 1, 3, 1])
-    assurance = c1.number_input("Assurance", key=cle("assurance"), min_value=0.0, value=0.0, step=0.01, format="%.2f")
-    unite_assurance = c2.selectbox("Unité", ["€", "%"], key=cle("unite_assurance"), help="€ : montant total — % : taux annuel sur le capital")
-    autres_frais = c3.number_input("Autres frais", key=cle("autres_frais"), min_value=0.0, value=0.0, step=0.01, format="%.2f")
-    unite_frais = c4.selectbox("Unité", ["€", "%"], key=cle("unite_frais"), help="€ : montant total — % : pourcentage du capital")
+with st.expander("Options (frais, calcul des intérêts)"):
+    c1, c2 = st.columns([3, 1])
+    autres_frais = c1.number_input("Autres frais", key=cle("autres_frais"), min_value=0.0, value=0.0, step=0.01, format="%.2f")
+    unite_frais = c2.selectbox("Unité", ["€", "%"], key=cle("unite_frais"), help="€ : montant total — % : pourcentage du capital")
     jours_exacts = st.checkbox(
         "Calculer les intérêts d'amortissement en jours exacts / 365 (au lieu de taux / 12)", key=cle("jours_exacts"),
         help="Les banques appliquent en général taux / 12 aux échéances d'amortissement.",
@@ -254,8 +265,7 @@ params = ParametresPret(
     periodicite=periodicite,
     type_remboursement=type_remboursement,
     interets_jours_exacts=jours_exacts,
-    assurance=assurance,
-    assurance_en_pourcentage=unite_assurance == "%",
+    assurance_mensuelle=assurance_mensuelle or 0.0,
     autres_frais=autres_frais,
     autres_frais_en_pourcentage=unite_frais == "%",
     montant_debloque=montant_debloque,
@@ -296,7 +306,10 @@ resultat = calculer(params)
 echeancier = resultat.echeancier
 
 m1, m2, m3, m4 = st.columns(4)
-m1.metric("Échéance", euros(echeancier["Échéance (€)"].iloc[params.nb_echeances_differe]))
+m1.metric(
+    "Échéance (assurance comprise)" if params.assurance_mensuelle else "Échéance",
+    euros(echeancier["Échéance (€)"].iloc[params.nb_echeances_differe]),
+)
 m2.metric(
     "Nombre d'échéances",
     len(echeancier),
