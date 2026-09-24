@@ -74,8 +74,8 @@ def test_differe_capitalise():
     # Solde au 05/03/2026 : fonds réellement versés (21 672,72 €) + intérêts ajoutés au capital.
     assert e["Solde (€)"].iloc[2] == pytest.approx(21_672.72 + r.interets_capitalises_calcules)
     assert e["Solde (€)"].iloc[-1] == pytest.approx(0)
-    # Échéances constantes une fois tous les fonds versés (dernier déblocage le 24/06/2026).
-    assert e["Échéance (€)"].iloc[7:-1].nunique() == 1
+    # Échéances constantes dès la fin du différé, malgré les déblocages de juin.
+    assert e["Échéance (€)"].iloc[3:-1].nunique() == 1
 
 
 def test_differe_paye():
@@ -122,17 +122,18 @@ def test_calage_sur_le_grand_livre():
     _, remboursements = lire_grand_livre(GRAND_LIVRE)
     r = calculer(pret_banque(468.45, remboursements["Capital remboursé (€)"]))
     assert comparer(r.echeancier, remboursements)["Écart (€)"].abs().max() == 0
-    assert set(r.echeancier["Échéance (€)"].iloc[7:-1]) == {468.45}
+    assert set(r.echeancier["Échéance (€)"].iloc[3:-1]) == {468.45}
     assert abs(r.capital_amorti - 24_185.76) < 0.2
 
 
 def test_option_jours_exacts():
     p = pret_banque(468.45)
     p.interets_jours_exacts = True
-    e = calculer_echeancier(p)
+    r = calculer(p)
+    e, base = r.echeancier, r.capital_amorti  # tableau du prêt complet
     avril, mai = e.iloc[3], e.iloc[4]  # 05/03 → 05/04 : 31 jours ; 05/04 → 05/05 : 30 jours
-    assert avril["Intérêt (€)"] == pytest.approx(e["Solde (€)"].iloc[2] * 0.0417 * 31 / 365, abs=0.01)
-    assert mai["Intérêt (€)"] == pytest.approx(avril["Solde (€)"] * 0.0417 * 30 / 365, abs=0.01)
+    assert avril["Intérêt (€)"] == pytest.approx(base * 0.0417 * 31 / 365, abs=0.01)
+    assert mai["Intérêt (€)"] == pytest.approx((base - avril["Amortissement (€)"]) * 0.0417 * 30 / 365, abs=0.01)
 
 
 def test_ajustement_sur_le_capital_restant_du_de_la_banque():
@@ -283,14 +284,13 @@ def pret_deux_deblocages(**options):
 
 def test_echeances_totales_par_defaut():
     e = calculer_echeancier(pret_deux_deblocages())
-    # Capital amorti selon le tableau du prêt complet (10 000 € sur 24 mois) dès la 1re échéance…
+    # Échéance constante du prêt complet (10 000 € sur 24 mois), quelles que soient les dates de déblocage.
+    assert set(e["Échéance (€)"].iloc[:-1]) == {434.25}
     theorique = calculer_echeancier(pret_deux_deblocages(deblocages=[Deblocage(date(2025, 12, 10), 10_000)]))
     assert e["Amortissement (€)"].tolist() == theorique["Amortissement (€)"].tolist()
-    # … mais intérêts et solde sur les seuls fonds versés : 6 000 € jusqu'au 20/03/2026.
-    assert e["Intérêt (€)"].iloc[0] == pytest.approx(6_000 * 0.04 * 26 / 365, abs=0.01)
+    # Le solde suit les fonds réellement versés : 6 000 € jusqu'au 20/03/2026, puis 10 000 €.
     assert e["Solde (€)"].iloc[0] == pytest.approx(6_000 - e["Amortissement (€)"].iloc[0])
-    assert e["Échéance (€)"].iloc[0] < 434.25
-    assert set(e["Échéance (€)"].iloc[4:-1]) == {434.25}  # tout est versé : échéance du prêt complet
+    assert e["Solde (€)"].iloc[3] == pytest.approx(theorique["Solde (€)"].iloc[3])
 
 
 def test_echeances_proratisees_jusqu_au_dernier_deblocage():

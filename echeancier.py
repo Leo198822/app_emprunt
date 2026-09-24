@@ -7,9 +7,9 @@ Principe (constaté sur le grand livre d'un prêt Crédit Agricole à déblocage
   **échéances constantes**, comme un prêt classique, quelles que soient les dates des derniers déblocages ;
 - pendant l'amortissement, les intérêts sont calculés à taux / 12 sur le capital restant dû
   (vérifié au centime sur le tableau bancaire) ; une option permet les jours exacts / 365 ;
-- **déblocages après la 1re échéance d'amortissement** : capital amorti selon le tableau du prêt complet
-  (banque du prêt n°141), ou échéances proratisées aux fonds versés jusqu'au dernier déblocage ; dans
-  les deux cas, intérêts et solde portent sur le capital réellement versé à chaque date ;
+- **déblocages après la 1re échéance d'amortissement** : échéances totales (échéance constante du prêt
+  complet dès la 1re échéance, comme la banque du prêt n°141), ou échéances proratisées aux fonds versés
+  jusqu'au dernier déblocage ; le solde affiché est toujours le capital réellement versé à chaque date ;
 - **déblocage partiel** : l'échéancier porte sur le montant débloqué, soit avec l'échéance du prêt
   complet (le capital est soldé plus tôt ; les échéances suivantes restent jusqu'au terme, à 0 hors
   assurance), soit avec une échéance réduite étalée sur toute la durée.
@@ -333,8 +333,8 @@ def calculer(p: ParametresPret) -> Resultat:
     # Capital soldé avant la fin (déblocage partiel, échéance maintenue) : les échéances suivantes
     # restent dans l'échéancier, à 0 hors assurance et frais, jusqu'au terme prévu du prêt.
     frais = repartir(p.montant_total_autres_frais, p.nb_echeances)
-    # Le tableau théorique porte sur la totalité du prêt ; le solde affiché et les intérêts portent sur le
-    # capital réellement versé à chaque date (les fonds non encore débloqués n'en font pas partie).
+    # Le tableau porte sur la totalité du prêt (échéance constante, comme la banque) ; le solde affiché est
+    # le capital réellement versé à chaque date (les fonds non encore débloqués n'en font pas partie).
     lignes, solde = [], p.capital_effectif
     debut = ajouter_mois(dates[0], -p.mois_par_periode, p.jour_prelevement)
     for k, d in enumerate(dates):
@@ -344,9 +344,6 @@ def calculer(p: ParametresPret) -> Resultat:
             amort = -interet if p.interets_differe_capitalises else 0.0
         else:
             interet, amort = lignes_amort[k - p.nb_echeances_differe]
-            fonds_en_attente = non_verse(p, debut) > 0.005 or any(debut < x.date <= d for x in p.deblocages)
-            if fonds_en_attente and not proratise:
-                interet = interet_reel(p, solde, debut, d, facteurs[k - p.nb_echeances_differe])
         assurance = p.assurance_sur(crd_debut)  # capital restant dû réel en début de période
         solde = round(solde - amort, 2)
         paye = round(interet + amort, 2)  # nul pendant un différé capitalisé
