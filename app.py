@@ -7,6 +7,7 @@ from echeancier import (
     PERIODICITES,
     Deblocage,
     ParametresPret,
+    ajouter_mois,
     ajuster_sur_solde,
     calculer,
     comparer,
@@ -126,30 +127,46 @@ if partiel:
 with st.expander("Options (assurance, frais, calcul des intérêts)"):
     c1, c2 = st.columns(2)
     mode_assurance = c1.selectbox(
-        "Calcul de l'assurance",
-        ["Montant fixe (€ par mois)", "% du capital restant dû (taux annuel)"],
+        "Assurance",
+        ["Aucune", "Montant fixe (€ par mois)", "% du capital restant dû (taux annuel)"],
         key=cle("mode_assurance"),
     )
     assurance_en_taux = mode_assurance.startswith("%")
-    valeur_assurance = c2.number_input(
-        "Taux annuel de l'assurance (%)" if assurance_en_taux else "Coût mensuel de l'assurance (€)",
-        key=cle("assurance_taux" if assurance_en_taux else "assurance_mensuelle"),
-        min_value=0.0,
-        value=None,
-        step=0.01,
-        format="%.3f" if assurance_en_taux else "%.2f",
-        placeholder="facultatif — ex. 0,300" if assurance_en_taux else "facultatif — ex. 12,50",
-        help=(
-            "Taux annuel appliqué au capital restant dû en début de chaque période : l'assurance diminue au fil des "
-            "remboursements et s'arrête quand le capital est soldé."
-            if assurance_en_taux
-            else "Montant prélevé chaque mois. En périodicité trimestrielle, semestrielle ou annuelle, il est multiplié "
-            "par le nombre de mois de la période. L'assurance court jusqu'au terme du prêt."
-        ),
+    valeur_assurance = None
+    if mode_assurance != "Aucune":
+        valeur_assurance = c2.number_input(
+            "Taux annuel de l'assurance (%)" if assurance_en_taux else "Coût mensuel de l'assurance (€)",
+            key=cle("assurance_taux" if assurance_en_taux else "assurance_mensuelle"),
+            min_value=0.0,
+            value=None,
+            step=0.01,
+            format="%.3f" if assurance_en_taux else "%.2f",
+            placeholder="ex. 0,300" if assurance_en_taux else "ex. 12,50",
+            help=(
+                "Taux annuel appliqué au capital restant dû en début de chaque période : l'assurance diminue au fil des "
+                "remboursements et s'arrête quand le capital est soldé."
+                if assurance_en_taux
+                else "Montant prélevé chaque mois. En périodicité trimestrielle, semestrielle ou annuelle, il est multiplié "
+                "par le nombre de mois de la période. L'assurance court jusqu'au terme du prêt."
+            ),
+        )
+
+    c1, c2 = st.columns(2)
+    mode_frais = c1.selectbox(
+        "Autres frais", ["Aucun", "Montant total (€)", "% du montant emprunté"], key=cle("mode_frais"),
+        help="Frais répartis également sur toutes les échéances.",
     )
-    c1, c2 = st.columns([3, 1])
-    autres_frais = c1.number_input("Autres frais", key=cle("autres_frais"), min_value=0.0, value=0.0, step=0.01, format="%.2f")
-    unite_frais = c2.selectbox("Unité", ["€", "%"], key=cle("unite_frais"), help="€ : montant total — % : pourcentage du capital")
+    autres_frais = 0.0
+    if mode_frais != "Aucun":
+        autres_frais = c2.number_input(
+            "Montant total des frais (€)" if mode_frais.startswith("Montant") else "Pourcentage du montant emprunté (%)",
+            key=cle("frais_montant" if mode_frais.startswith("Montant") else "frais_taux"),
+            min_value=0.0,
+            value=None,
+            step=0.01,
+            format="%.2f",
+        ) or 0.0
+
     jours_exacts = st.checkbox(
         "Calculer les intérêts d'amortissement en jours exacts / 365 (au lieu de taux / 12)", key=cle("jours_exacts"),
         help="Les banques appliquent en général taux / 12 aux échéances d'amortissement.",
@@ -237,6 +254,28 @@ elif deblocages:
     else:
         st.warning(f"{libelle} — il manque {euros(capital - total)} pour atteindre le montant emprunté ({euros(capital)}).")
 
+echeance_proratisee = False
+if len(deblocages) > 1 and premier_paiement and nb_echeances and type_remboursement == "Échéances constantes":
+    mois = PERIODICITES[periodicite]
+    premiere_amortissement = ajouter_mois(premier_paiement, int(nb_differe) * mois, premier_paiement.day)
+    tardifs = [d for d in deblocages if d.date > premiere_amortissement]
+    if tardifs:
+        st.markdown(
+            f"**{len(tardifs)} déblocage{'s' if len(tardifs) > 1 else ''}** "
+            f"intervien{'nent' if len(tardifs) > 1 else 't'} après la 1re échéance de remboursement du capital "
+            f"({premiere_amortissement.strftime('%d/%m/%Y')}). Jusqu'au dernier déblocage "
+            f"({max(d.date for d in tardifs).strftime('%d/%m/%Y')}), les échéances sont…"
+        )
+        echeance_proratisee = st.radio(
+            "Échéances avant le dernier déblocage",
+            [
+                "totales : calculées sur la totalité du prêt dès la 1re échéance",
+                "proratisées : réduites au prorata des fonds déjà versés, puis recalculées après le dernier déblocage",
+            ],
+            key=cle("echeance_proratisee"),
+            label_visibility="collapsed",
+        ).startswith("proratisées")
+
 # --- Résultat ----------------------------------------------------------------------------
 st.header("Échéancier", divider="gray")
 manquants = [
@@ -278,9 +317,10 @@ params = ParametresPret(
     assurance_mensuelle=0.0 if assurance_en_taux else (valeur_assurance or 0.0),
     assurance_taux_crd=(valeur_assurance or 0.0) if assurance_en_taux else 0.0,
     autres_frais=autres_frais,
-    autres_frais_en_pourcentage=unite_frais == "%",
+    autres_frais_en_pourcentage=mode_frais.startswith("%"),
     montant_debloque=montant_debloque,
     partiel_duree_reduite=duree_reduite,
+    echeance_proratisee=echeance_proratisee,
 )
 with st.expander("🎯 Ajuster sur un capital restant dû connu (facultatif)"):
     st.caption(
@@ -319,7 +359,7 @@ echeancier = resultat.echeancier
 m1, m2, m3, m4 = st.columns(4)
 m1.metric(
     "Échéance (assurance comprise)" if params.assurance_mensuelle or params.assurance_taux_crd else "Échéance",
-    euros(echeancier["Échéance (€)"].iloc[params.nb_echeances_differe]),
+    euros(echeancier["Échéance (€)"].iloc[params.nb_echeances_differe :].mode().iloc[0]),
 )
 m2.metric(
     "Nombre d'échéances",

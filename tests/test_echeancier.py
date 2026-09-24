@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import date
 from pathlib import Path
 
@@ -253,6 +254,56 @@ def test_periodicites_en_deblocage_partiel(periodicite, mois, nombre, duree_redu
     assert len(e) == nombre
     solde_avant_terme = (e["Solde (€)"].iloc[:-1] == 0).any()
     assert solde_avant_terme if duree_reduite else not solde_avant_terme
+
+
+def pret_deux_deblocages(**options):
+    """Prêt de 10 000 € sur 24 mois à 4 % : 6 000 € versés le 15/12/2025, 4 000 € le 20/03/2026."""
+    valeurs = dict(
+        capital=10_000,
+        taux=4.0,
+        nb_echeances=24,
+        date_premier_paiement=date(2026, 1, 10),
+        jour_prelevement=10,
+        deblocages=[Deblocage(date(2025, 12, 15), 6_000), Deblocage(date(2026, 3, 20), 4_000)],
+    )
+    return ParametresPret(**{**valeurs, **options})
+
+
+def test_echeances_totales_par_defaut():
+    e = calculer_echeancier(pret_deux_deblocages())
+    assert set(e["Échéance (€)"].iloc[:-1]) == {434.25}  # 10 000 € sur 24 mois dès la 1re échéance
+
+
+def test_echeances_proratisees_jusqu_au_dernier_deblocage():
+    e = calculer_echeancier(pret_deux_deblocages(echeance_proratisee=True))
+    # Tant que 6 000 € sur 10 000 € sont versés : 60 % de l'échéance.
+    assert e["Échéance (€)"].iloc[:3].tolist() == [260.55] * 3
+    # 1re échéance : intérêts sur les 6 000 € du 15/12/2025 au 10/01/2026 (26 jours).
+    assert e["Intérêt (€)"].iloc[0] == pytest.approx(6_000 * 0.04 * 26 / 365, abs=0.01)
+    # Échéance d'avril : tout est versé, échéance entière ; intérêts des 4 000 € au prorata (21 jours).
+    assert e["Échéance (€)"].iloc[3] == pytest.approx(434.25)
+    # Ensuite : échéance recalculée pour solder le prêt au terme.
+    assert len(set(e["Échéance (€)"].iloc[4:-1])) == 1
+    assert len(e) == 24
+    assert e["Amortissement (€)"].sum() == pytest.approx(10_000)
+    assert e["Solde (€)"].iloc[-1] == pytest.approx(0)
+
+
+def test_proratisation_sans_effet_si_tout_est_verse_avant_la_1re_echeance():
+    p = pret_deux_deblocages(echeance_proratisee=True)
+    p.deblocages = [Deblocage(date(2025, 12, 1), 6_000), Deblocage(date(2025, 12, 20), 4_000)]
+    assert calculer_echeancier(p).equals(calculer_echeancier(replace(p, echeance_proratisee=False)))
+
+
+def test_proratisation_sur_le_pret_141():
+    """Prêt n°141 : les déblocages de juin interviennent après la 1re échéance d'amortissement (05/04/2026)."""
+    p = pret_banque(468.45)
+    p.interets_capitalises_imposes = 185.76
+    totale = calculer_echeancier(p)
+    proratisee = calculer_echeancier(replace(p, echeance_proratisee=True))
+    assert proratisee["Échéance (€)"].iloc[3] < totale["Échéance (€)"].iloc[3]  # avril : fonds pas tous versés
+    assert proratisee["Amortissement (€)"].sum() == pytest.approx(totale["Amortissement (€)"].sum())
+    assert proratisee["Solde (€)"].iloc[-1] == pytest.approx(0)
 
 
 def test_export_respecte_le_fichier_type(tmp_path):

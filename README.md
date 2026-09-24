@@ -20,6 +20,11 @@ L'écran se remplit en deux étapes ; l'échéancier se génère dès que les in
    Si l'échéance de la banque est saisie, c'est elle qui détermine quand le capital est soldé.
    Des déblocages supérieurs au montant emprunté, ou un 1er déblocage postérieur à la 1re échéance,
    bloquent la génération de l'échéancier.
+   **Déblocages après la 1re échéance de remboursement du capital** (plusieurs déblocages) : l'option
+   n'apparaît que dans ce cas. Jusqu'au dernier déblocage, les échéances sont au choix
+   - *totales* : calculées sur la totalité du prêt dès la 1re échéance (cas du prêt n°141) ;
+   - *proratisées* : réduites au prorata des fonds déjà versés, intérêts sur le capital réellement versé,
+     puis échéance recalculée après le dernier déblocage pour solder le prêt au terme.
 2. **Les déblocages** : import du grand livre du compte 164 exporté de Pennylane (recommandé : les
    remboursements comptabilisés servent aussi de contrôle), saisie manuelle, ou fonds versés en une fois
    (en déblocage partiel, saisir alors le montant débloqué). Le total des déblocages est affiché.
@@ -28,8 +33,9 @@ L'écran se remplit en deux étapes ; l'échéancier se génère dès que les in
    dessus : l'application ajuste les intérêts ajoutés au capital pendant le différé ou, sans différé,
    l'échéance.
 
-Le volet **Options**, placé entre l'étape 1 et l'étape 2, regroupe l'assurance (coût mensuel fixe en € ou % du
-capital restant dû), les autres frais et le calcul des intérêts en jours exacts ; il est replié par défaut.
+Le volet **Options**, placé entre l'étape 1 et l'étape 2, regroupe l'assurance (aucune, coût mensuel fixe en €
+ou % du capital restant dû), les autres frais (aucun, montant total ou % du montant emprunté) et le calcul des
+intérêts en jours exacts ; il est replié par défaut et chaque champ de saisie n'apparaît qu'une fois le mode choisi.
 Le bouton **Télécharger l'échéancier Pennylane** produit le fichier
 d'import (même structure que `modeles/Echeancier_type.xlsx`, dates au format jj/mm/aaaa).
 
