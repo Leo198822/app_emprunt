@@ -28,8 +28,9 @@ L'écran se remplit en deux étapes ; l'échéancier se génère dès que les in
    dessus : l'application ajuste les intérêts ajoutés au capital pendant le différé ou, sans différé,
    l'échéance.
 
-L'**assurance** se saisit à l'étape 1, en coût mensuel fixe (€) ou en % du capital restant dû. Les options (frais, intérêts en jours exacts) sont
-regroupées dans un volet repliable. Le bouton **Télécharger l'échéancier Pennylane** produit le fichier
+Le volet **Options**, placé entre l'étape 1 et l'étape 2, regroupe l'assurance (coût mensuel fixe en € ou % du
+capital restant dû), les autres frais et le calcul des intérêts en jours exacts ; il est replié par défaut.
+Le bouton **Télécharger l'échéancier Pennylane** produit le fichier
 d'import (même structure que `modeles/Echeancier_type.xlsx`, dates au format jj/mm/aaaa).
 
 ### Exemple : prêt n°141

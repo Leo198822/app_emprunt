@@ -89,30 +89,6 @@ nb_differe = c2.number_input(
     help="Premières échéances sans remboursement de capital, pendant le déblocage des fonds.",
 )
 
-c1, c2 = st.columns(2)
-mode_assurance = c2.selectbox(
-    "Calcul de l'assurance",
-    ["Montant fixe (€ par mois)", "% du capital restant dû (taux annuel)"],
-    key=cle("mode_assurance"),
-)
-assurance_en_taux = mode_assurance.startswith("%")
-valeur_assurance = c1.number_input(
-    "Taux annuel de l'assurance (%)" if assurance_en_taux else "Coût mensuel de l'assurance (€)",
-    key=cle("assurance_taux" if assurance_en_taux else "assurance_mensuelle"),
-    min_value=0.0,
-    value=None,
-    step=0.01,
-    format="%.3f" if assurance_en_taux else "%.2f",
-    placeholder="facultatif — ex. 0,300" if assurance_en_taux else "facultatif — ex. 12,50",
-    help=(
-        "Taux annuel appliqué au capital restant dû en début de chaque période : l'assurance diminue au fil des "
-        "remboursements et s'arrête quand le capital est soldé."
-        if assurance_en_taux
-        else "Montant prélevé chaque mois. En périodicité trimestrielle, semestrielle ou annuelle, il est multiplié "
-        "par le nombre de mois de la période. L'assurance court jusqu'au terme du prêt."
-    ),
-)
-
 interets_capitalises = True
 if nb_differe:
     interets_capitalises = st.radio(
@@ -145,6 +121,39 @@ if partiel:
             ],
             key=cle("duree_reduite"),
         ).startswith("garde l'échéance")
+
+# --- Options -----------------------------------------------------------------------------
+with st.expander("Options (assurance, frais, calcul des intérêts)"):
+    c1, c2 = st.columns(2)
+    mode_assurance = c1.selectbox(
+        "Calcul de l'assurance",
+        ["Montant fixe (€ par mois)", "% du capital restant dû (taux annuel)"],
+        key=cle("mode_assurance"),
+    )
+    assurance_en_taux = mode_assurance.startswith("%")
+    valeur_assurance = c2.number_input(
+        "Taux annuel de l'assurance (%)" if assurance_en_taux else "Coût mensuel de l'assurance (€)",
+        key=cle("assurance_taux" if assurance_en_taux else "assurance_mensuelle"),
+        min_value=0.0,
+        value=None,
+        step=0.01,
+        format="%.3f" if assurance_en_taux else "%.2f",
+        placeholder="facultatif — ex. 0,300" if assurance_en_taux else "facultatif — ex. 12,50",
+        help=(
+            "Taux annuel appliqué au capital restant dû en début de chaque période : l'assurance diminue au fil des "
+            "remboursements et s'arrête quand le capital est soldé."
+            if assurance_en_taux
+            else "Montant prélevé chaque mois. En périodicité trimestrielle, semestrielle ou annuelle, il est multiplié "
+            "par le nombre de mois de la période. L'assurance court jusqu'au terme du prêt."
+        ),
+    )
+    c1, c2 = st.columns([3, 1])
+    autres_frais = c1.number_input("Autres frais", key=cle("autres_frais"), min_value=0.0, value=0.0, step=0.01, format="%.2f")
+    unite_frais = c2.selectbox("Unité", ["€", "%"], key=cle("unite_frais"), help="€ : montant total — % : pourcentage du capital")
+    jours_exacts = st.checkbox(
+        "Calculer les intérêts d'amortissement en jours exacts / 365 (au lieu de taux / 12)", key=cle("jours_exacts"),
+        help="Les banques appliquent en général taux / 12 aux échéances d'amortissement.",
+    )
 
 # --- Étape 2 : les déblocages ------------------------------------------------------------
 st.header("2. Les déblocages", divider="gray")
@@ -227,16 +236,6 @@ elif deblocages:
             st.warning("Les fonds sont débloqués en totalité : choisissez « en totalité » à l'étape 1.")
     else:
         st.warning(f"{libelle} — il manque {euros(capital - total)} pour atteindre le montant emprunté ({euros(capital)}).")
-
-# --- Options -----------------------------------------------------------------------------
-with st.expander("Options (frais, calcul des intérêts)"):
-    c1, c2 = st.columns([3, 1])
-    autres_frais = c1.number_input("Autres frais", key=cle("autres_frais"), min_value=0.0, value=0.0, step=0.01, format="%.2f")
-    unite_frais = c2.selectbox("Unité", ["€", "%"], key=cle("unite_frais"), help="€ : montant total — % : pourcentage du capital")
-    jours_exacts = st.checkbox(
-        "Calculer les intérêts d'amortissement en jours exacts / 365 (au lieu de taux / 12)", key=cle("jours_exacts"),
-        help="Les banques appliquent en général taux / 12 aux échéances d'amortissement.",
-    )
 
 # --- Résultat ----------------------------------------------------------------------------
 st.header("Échéancier", divider="gray")
