@@ -8,7 +8,8 @@ Principe (constaté sur le grand livre d'un prêt Crédit Agricole à déblocage
 - pendant l'amortissement, les intérêts sont calculés à taux / 12 sur le capital restant dû
   (vérifié au centime sur le tableau bancaire) ; une option permet les jours exacts / 365 ;
 - **déblocage partiel** : l'échéancier porte sur le montant débloqué, soit avec l'échéance du prêt
-  complet (le remboursement s'arrête plus tôt), soit sur toute la durée (échéance réduite).
+  complet (le capital est soldé plus tôt ; les échéances suivantes restent jusqu'au terme, à 0 hors
+  assurance), soit avec une échéance réduite étalée sur toute la durée.
 """
 
 from __future__ import annotations
@@ -110,6 +111,7 @@ class Resultat:
     interets_capitalises_calcules: float
     interets_capitalises_retenus: float
     echeance_constante: float | None
+    rang_capital_solde: int  # rang de l'échéance qui solde le capital (= nombre d'échéances sans fin anticipée)
 
 
 def ajouter_mois(d: date, mois: int, jour: int | None = None) -> date:
@@ -264,13 +266,10 @@ def calculer(p: ParametresPret) -> Resultat:
         # Total imposé par la banque : l'écart est réparti au prorata des intérêts de chaque mois.
         interets = repartir_ecart(interets, capitalises)
 
-    # Capital soldé avant la fin (déblocage partiel, échéance maintenue) : échéances suivantes supprimées.
-    while len(lignes_amort) > 1 and lignes_amort[-1] == (0.0, 0.0):
-        lignes_amort.pop()
-    dates = dates[: p.nb_echeances_differe + len(lignes_amort)]
-
-    assurances = repartir(p.montant_total_assurance, len(dates))
-    frais = repartir(p.montant_total_autres_frais, len(dates))
+    # Capital soldé avant la fin (déblocage partiel, échéance maintenue) : les échéances suivantes
+    # restent dans l'échéancier, à 0 hors assurance et frais, jusqu'au terme prévu du prêt.
+    assurances = repartir(p.montant_total_assurance, p.nb_echeances)
+    frais = repartir(p.montant_total_autres_frais, p.nb_echeances)
     lignes, solde = [], p.capital_effectif
     for k, d in enumerate(dates):
         if k < p.nb_echeances_differe:
@@ -281,7 +280,9 @@ def calculer(p: ParametresPret) -> Resultat:
         solde = round(solde - amort, 2)
         paye = round(interet + amort, 2)  # nul pendant un différé capitalisé
         lignes.append([d, interet, assurances[k], frais[k], amort, round(paye + assurances[k] + frais[k], 2), solde])
-    return Resultat(pd.DataFrame(lignes, columns=COLONNES), base, calcules, capitalises, echeance)
+    echeancier = pd.DataFrame(lignes, columns=COLONNES)
+    soldees = [k + 1 for k in range(p.nb_echeances_differe, len(lignes)) if lignes[k][6] <= 0.005]
+    return Resultat(echeancier, base, calcules, capitalises, echeance, soldees[0] if soldees else len(lignes))
 
 
 def calculer_echeancier(p: ParametresPret) -> pd.DataFrame:

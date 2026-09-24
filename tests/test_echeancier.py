@@ -172,28 +172,37 @@ def pret_partiel(**options):
     return ParametresPret(**{**valeurs, **options})
 
 
-def test_partiel_echeance_maintenue_raccourcit_la_duree():
+def test_partiel_echeance_maintenue_solde_le_capital_plus_tot():
     r = calculer(pret_partiel(partiel_duree_reduite=True))
     e = r.echeancier
     assert r.echeance_constante == pytest.approx(142.61)  # échéance du prêt complet de 10 000 €
-    assert len(e) == 58  # soldé avant les 80 échéances
-    assert set(e["Échéance (€)"].iloc[:-1]) == {142.61}
+    assert len(e) == 80  # la durée saisie est conservée
+    assert r.rang_capital_solde == 58  # capital soldé à la 58e échéance
+    assert set(e["Échéance (€)"].iloc[:57]) == {142.61}
+    assert (e.iloc[58:][["Intérêt (€)", "Amortissement (€)", "Échéance (€)", "Solde (€)"]] == 0).all().all()
     assert e["Amortissement (€)"].sum() == pytest.approx(7_500)
-    assert e["Solde (€)"].iloc[-1] == pytest.approx(0)
+
+
+def test_partiel_l_assurance_continue_apres_le_solde_du_capital():
+    e = calculer_echeancier(pret_partiel(assurance=0.36, assurance_en_pourcentage=True))
+    assert len(e) == 80
+    assert set(e["Assurance (€)"]) == {3.00}  # 10 000 € x 0,36 % / 12, sur toute la durée
+    assert (e["Échéance (€)"].iloc[58:] == 3.00).all()
 
 
 def test_partiel_duree_maintenue_reduit_l_echeance():
     r = calculer(pret_partiel(partiel_duree_reduite=False))
     e = r.echeancier
     assert len(e) == 80
+    assert r.rang_capital_solde == 80
     assert r.echeance_constante == pytest.approx(106.96)  # 7 500 € sur 80 mois
     assert e["Amortissement (€)"].sum() == pytest.approx(7_500)
     assert e["Solde (€)"].iloc[-1] == pytest.approx(0)
 
 
 def test_partiel_echeance_bancaire_decide_de_la_duree():
-    assert len(calculer_echeancier(pret_partiel(echeance_imposee=142.61))) == 58
-    assert len(calculer_echeancier(pret_partiel(echeance_imposee=106.96))) == 80
+    assert calculer(pret_partiel(echeance_imposee=142.61)).rang_capital_solde == 58
+    assert calculer(pret_partiel(echeance_imposee=106.96)).rang_capital_solde == 80
 
 
 def test_partiel_export_porte_sur_le_montant_debloque(tmp_path):
@@ -202,8 +211,8 @@ def test_partiel_export_porte_sur_le_montant_debloque(tmp_path):
     fichier.write_bytes(exporter_pennylane(p, calculer_echeancier(p)))
     ws = openpyxl.load_workbook(fichier).active
     assert ws["A2"].value == 7_500
-    assert ws["G2"].value == 58
-    assert ws.max_row == 5 + 58
+    assert ws["G2"].value == 80
+    assert ws.max_row == 5 + 80
 
 
 @pytest.mark.parametrize("periodicite, mois, nombre", [("Mensuelle", 1, 80), ("Trimestrielle", 3, 27), ("Semestrielle", 6, 14), ("Annuelle", 12, 7)])
@@ -213,7 +222,9 @@ def test_periodicites_en_deblocage_partiel(periodicite, mois, nombre, duree_redu
     assert (e["Date"].iloc[1] - e["Date"].iloc[0]).days in range(28 * mois, 31 * mois + 1)
     assert e["Amortissement (€)"].sum() == pytest.approx(7_500)
     assert e["Solde (€)"].iloc[-1] == pytest.approx(0)
-    assert (len(e) < nombre) if duree_reduite else (len(e) == nombre)
+    assert len(e) == nombre
+    solde_avant_terme = (e["Solde (€)"].iloc[:-1] == 0).any()
+    assert solde_avant_terme if duree_reduite else not solde_avant_terme
 
 
 def test_export_respecte_le_fichier_type(tmp_path):

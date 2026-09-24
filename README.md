@@ -13,10 +13,12 @@ L'écran se remplit en deux étapes ; l'échéancier se génère dès que les in
    banque. Si un différé est saisi : intérêts ajoutés au capital ou prélevés.
    **Emprunt débloqué en totalité ou partiellement** : en partiel, l'échéancier porte sur le montant
    réellement débloqué, au choix
-   - *échéance du prêt complet maintenue* : le remboursement s'arrête plus tôt (ex. prêt de 10 000 €
-     sur 80 mois à 4 %, 7 500 € débloqués → 58 échéances de 142,61 €) ;
+   - *échéance du prêt complet maintenue* : le capital est soldé plus tôt (ex. prêt de 10 000 € sur
+     80 mois à 4 %, 7 500 € débloqués → capital soldé à la 58e échéance de 142,61 €) ; l'échéancier
+     garde la durée saisie, les échéances suivantes restant à 0 € hors assurance et frais ;
    - *durée maintenue* : l'échéance est recalculée sur le montant débloqué (→ 80 échéances de 106,96 €).
-   Si l'échéance de la banque est saisie, c'est elle qui détermine la durée.
+   Si l'échéance de la banque est saisie, c'est elle qui détermine quand le capital est soldé.
+   Des déblocages supérieurs au montant emprunté bloquent la génération de l'échéancier.
 2. **Les déblocages** : import du grand livre du compte 164 exporté de Pennylane (recommandé : les
    remboursements comptabilisés servent aussi de contrôle), saisie manuelle, ou fonds versés en une fois
    (en déblocage partiel, saisir alors le montant débloqué). Le total des déblocages est affiché.

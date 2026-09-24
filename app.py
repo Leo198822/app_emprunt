@@ -109,14 +109,14 @@ duree_reduite = True
 if partiel:
     if echeance_banque:
         st.caption(
-            "L'échéance de la banque étant saisie, la durée en découle : si elle est celle du prêt complet, "
-            "le remboursement s'arrête plus tôt ; si elle a été recalculée, il couvre toute la durée."
+            "L'échéance de la banque étant saisie, elle détermine quand le capital est soldé : si elle est celle du "
+            "prêt complet, avant le terme (échéances à 0 ensuite) ; si elle a été recalculée, au terme."
         )
     elif type_remboursement == "Échéances constantes":
         duree_reduite = st.radio(
             "Sur le montant débloqué, la banque…",
             [
-                "garde l'échéance du prêt complet : le remboursement s'arrête plus tôt",
+                "garde l'échéance du prêt complet : le capital est soldé plus tôt (échéances à 0 ensuite)",
                 "garde la durée : l'échéance est réduite et étalée sur toute la durée",
             ],
             key=cle("duree_reduite"),
@@ -171,7 +171,15 @@ montant_debloque = None
 if partiel:
     montant_debloque = round(sum(d.montant for d in deblocages), 2) if deblocages else (montant_unique if not source.startswith(("Importer", "Saisir")) else None)
 
-if deblocages:
+depassement = None
+montant_verse = round(sum(d.montant for d in deblocages), 2) if deblocages else (montant_debloque or 0)
+if capital and montant_verse > capital + 0.005:
+    depassement = round(montant_verse - capital, 2)
+    st.error(
+        f"⛔ Les déblocages ({euros(montant_verse)}) dépassent le montant emprunté ({euros(capital)}) de "
+        f"{euros(depassement)}. Corrigez les déblocages ou le montant emprunté : l'échéancier ne peut pas être généré."
+    )
+elif deblocages:
     total = round(sum(d.montant for d in deblocages), 2)
     libelle = f"**Total des déblocages : {euros(total)}** ({len(deblocages)} déblocage{'s' if len(deblocages) > 1 else ''})"
     if not capital:
@@ -183,7 +191,7 @@ if deblocages:
         if partiel:
             st.warning("Les fonds sont débloqués en totalité : choisissez « en totalité » à l'étape 1.")
     else:
-        st.warning(f"{libelle} — écart de {euros(total - capital)} avec le montant emprunté ({euros(capital)}).")
+        st.warning(f"{libelle} — il manque {euros(capital - total)} pour atteindre le montant emprunté ({euros(capital)}).")
 
 # --- Options -----------------------------------------------------------------------------
 with st.expander("Options (assurance, frais, calcul des intérêts)"):
@@ -215,6 +223,9 @@ if source.startswith("Importer") and not deblocages:
     manquants.append("le grand livre (ou choisissez une autre façon de renseigner les déblocages)")
 if manquants:
     st.info("Pour générer l'échéancier, renseignez : " + ", ".join(manquants) + ".")
+    st.stop()
+if depassement:
+    st.error("⛔ Échéancier non généré : les déblocages dépassent le montant emprunté (voir l'étape 2).")
     st.stop()
 
 params = ParametresPret(
@@ -277,16 +288,17 @@ m1.metric("Échéance", euros(echeancier["Échéance (€)"].iloc[params.nb_eche
 m2.metric(
     "Nombre d'échéances",
     len(echeancier),
-    delta=len(echeancier) - params.nb_echeances if len(echeancier) != params.nb_echeances else None,
-    delta_color="off",
-    help=f"Fin du remboursement le {echeancier['Date'].iloc[-1].strftime('%d/%m/%Y')}.",
+    help=f"Dernière échéance le {echeancier['Date'].iloc[-1].strftime('%d/%m/%Y')}.",
 )
 m3.metric("Capital remboursé", euros(resultat.capital_amorti))
 m4.metric("Total des intérêts", euros(echeancier["Intérêt (€)"].sum()))
-if len(echeancier) < params.nb_echeances:
+rang = resultat.rang_capital_solde
+if rang < len(echeancier):
+    reste = len(echeancier) - rang
     st.info(
-        f"Remboursement terminé en {len(echeancier)} échéances au lieu de {params.nb_echeances} "
-        f"(dernière échéance le {echeancier['Date'].iloc[-1].strftime('%d/%m/%Y')})."
+        f"Capital soldé à l'échéance n°{rang} ({echeancier['Date'].iloc[rang - 1].strftime('%d/%m/%Y')}). "
+        f"Les {reste} échéance{'s' if reste > 1 else ''} suivante{'s' if reste > 1 else ''}, jusqu'au "
+        f"{echeancier['Date'].iloc[-1].strftime('%d/%m/%Y')}, restent dans l'échéancier à 0 € hors assurance et frais."
     )
 
 if params.nb_echeances_differe and interets_capitalises:
