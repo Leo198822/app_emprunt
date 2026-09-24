@@ -159,6 +159,63 @@ def test_ajustement_avant_la_premiere_echeance():
     assert ajuster_sur_solde(pret_simple(), date(2025, 12, 1), 24_000) is None
 
 
+def pret_partiel(**options):
+    """Prêt de 10 000 € sur 80 mois à 4 %, dont 7 500 € seulement débloqués."""
+    valeurs = dict(
+        capital=10_000,
+        taux=4.0,
+        nb_echeances=80,
+        date_premier_paiement=date(2026, 1, 10),
+        jour_prelevement=10,
+        montant_debloque=7_500,
+    )
+    return ParametresPret(**{**valeurs, **options})
+
+
+def test_partiel_echeance_maintenue_raccourcit_la_duree():
+    r = calculer(pret_partiel(partiel_duree_reduite=True))
+    e = r.echeancier
+    assert r.echeance_constante == pytest.approx(142.61)  # échéance du prêt complet de 10 000 €
+    assert len(e) == 58  # soldé avant les 80 échéances
+    assert set(e["Échéance (€)"].iloc[:-1]) == {142.61}
+    assert e["Amortissement (€)"].sum() == pytest.approx(7_500)
+    assert e["Solde (€)"].iloc[-1] == pytest.approx(0)
+
+
+def test_partiel_duree_maintenue_reduit_l_echeance():
+    r = calculer(pret_partiel(partiel_duree_reduite=False))
+    e = r.echeancier
+    assert len(e) == 80
+    assert r.echeance_constante == pytest.approx(106.96)  # 7 500 € sur 80 mois
+    assert e["Amortissement (€)"].sum() == pytest.approx(7_500)
+    assert e["Solde (€)"].iloc[-1] == pytest.approx(0)
+
+
+def test_partiel_echeance_bancaire_decide_de_la_duree():
+    assert len(calculer_echeancier(pret_partiel(echeance_imposee=142.61))) == 58
+    assert len(calculer_echeancier(pret_partiel(echeance_imposee=106.96))) == 80
+
+
+def test_partiel_export_porte_sur_le_montant_debloque(tmp_path):
+    p = pret_partiel()
+    fichier = tmp_path / "partiel.xlsx"
+    fichier.write_bytes(exporter_pennylane(p, calculer_echeancier(p)))
+    ws = openpyxl.load_workbook(fichier).active
+    assert ws["A2"].value == 7_500
+    assert ws["G2"].value == 58
+    assert ws.max_row == 5 + 58
+
+
+@pytest.mark.parametrize("periodicite, mois, nombre", [("Mensuelle", 1, 80), ("Trimestrielle", 3, 27), ("Semestrielle", 6, 14), ("Annuelle", 12, 7)])
+@pytest.mark.parametrize("duree_reduite", [True, False])
+def test_periodicites_en_deblocage_partiel(periodicite, mois, nombre, duree_reduite):
+    e = calculer_echeancier(pret_partiel(periodicite=periodicite, nb_echeances=nombre, partiel_duree_reduite=duree_reduite))
+    assert (e["Date"].iloc[1] - e["Date"].iloc[0]).days in range(28 * mois, 31 * mois + 1)
+    assert e["Amortissement (€)"].sum() == pytest.approx(7_500)
+    assert e["Solde (€)"].iloc[-1] == pytest.approx(0)
+    assert (len(e) < nombre) if duree_reduite else (len(e) == nombre)
+
+
 def test_export_respecte_le_fichier_type(tmp_path):
     p = pret_banque()
     fichier = tmp_path / "export.xlsx"

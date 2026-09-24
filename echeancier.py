@@ -6,7 +6,9 @@ Principe (constaté sur le grand livre d'un prêt Crédit Agricole à déblocage
 - à la fin du différé, la banque amortit le capital total (+ intérêts capitalisés) par
   **échéances constantes**, comme un prêt classique, quelles que soient les dates des derniers déblocages ;
 - pendant l'amortissement, les intérêts sont calculés à taux / 12 sur le capital restant dû
-  (vérifié au centime sur le tableau bancaire) ; une option permet les jours exacts / 365.
+  (vérifié au centime sur le tableau bancaire) ; une option permet les jours exacts / 365 ;
+- **déblocage partiel** : l'échéancier porte sur le montant débloqué, soit avec l'échéance du prêt
+  complet (le remboursement s'arrête plus tôt), soit sur toute la durée (échéance réduite).
 """
 
 from __future__ import annotations
@@ -36,7 +38,7 @@ class Deblocage:
 
 @dataclass
 class ParametresPret:
-    capital: float
+    capital: float  # montant emprunté (offre de prêt)
     taux: float  # taux nominal annuel en %
     nb_echeances: int  # nombre total d'échéances, différé inclus
     date_premier_paiement: date
@@ -54,6 +56,18 @@ class ParametresPret:
     assurance_en_pourcentage: bool = False  # True : taux annuel sur le capital ; False : montant total
     autres_frais: float = 0.0
     autres_frais_en_pourcentage: bool = False  # True : % du capital ; False : montant total
+    montant_debloque: float | None = None  # déblocage partiel : montant réellement versé (None = en totalité)
+    partiel_duree_reduite: bool = True  # partiel : True = échéance du prêt complet, durée raccourcie ;
+    # False = durée maintenue, échéance recalculée sur le montant débloqué
+
+    @property
+    def capital_effectif(self) -> float:
+        """Capital réellement débloqué, sur lequel porte l'échéancier."""
+        return self.capital if self.montant_debloque is None else self.montant_debloque
+
+    @property
+    def partiel(self) -> bool:
+        return self.montant_debloque is not None and self.montant_debloque < self.capital - 0.005
 
     @property
     def mois_par_periode(self) -> int:
@@ -131,7 +145,7 @@ def interets_differe(p: ParametresPret, dates: list[date]) -> list[float]:
     """
     # Sans déblocage saisi : fonds versés en totalité une période avant la première échéance.
     deblocages = sorted(p.deblocages, key=lambda d: d.date) or [
-        Deblocage(ajouter_mois(dates[0], -p.mois_par_periode, p.jour_prelevement), p.capital)
+        Deblocage(ajouter_mois(dates[0], -p.mois_par_periode, p.jour_prelevement), p.capital_effectif)
     ]
     r, t = p.taux / 100, p.taux_periodique
     interets, debut = [], None
@@ -222,7 +236,7 @@ def calculer(p: ParametresPret) -> Resultat:
     capitalises = calcules
     if p.interets_differe_capitalises and p.interets_capitalises_imposes is not None:
         capitalises = round(p.interets_capitalises_imposes, 2)
-    base = round(p.capital + capitalises, 2)
+    base = round(p.capital_effectif + capitalises, 2)
 
     echeance = None
     if p.type_remboursement == "Amortissement constant":
@@ -236,8 +250,12 @@ def calculer(p: ParametresPret) -> Resultat:
             echeance = round(p.echeance_imposee, 2)
             if p.interets_differe_capitalises and p.interets_capitalises_imposes is None:
                 # L'échéance de la banque fixe le capital amorti, donc les intérêts capitalisés.
-                base = calibrer_base(echeance, t, facteurs, p.remboursements_constates)
-                capitalises = round(base - p.capital, 2)
+                if not p.partiel:
+                    base = calibrer_base(echeance, t, facteurs, p.remboursements_constates)
+                    capitalises = round(base - p.capital_effectif, 2)
+        elif p.partiel and p.partiel_duree_reduite:
+            # Échéance du prêt complet appliquée au montant débloqué : le remboursement s'arrête plus tôt.
+            echeance = echeance_pour(round(p.capital + capitalises, 2), t, n)
         else:
             echeance = echeance_pour(base, t, n)
         lignes_amort = tableau_constant(base, echeance, facteurs)
@@ -246,9 +264,14 @@ def calculer(p: ParametresPret) -> Resultat:
         # Total imposé par la banque : l'écart est réparti au prorata des intérêts de chaque mois.
         interets = repartir_ecart(interets, capitalises)
 
-    assurances = repartir(p.montant_total_assurance, p.nb_echeances)
-    frais = repartir(p.montant_total_autres_frais, p.nb_echeances)
-    lignes, solde = [], p.capital
+    # Capital soldé avant la fin (déblocage partiel, échéance maintenue) : échéances suivantes supprimées.
+    while len(lignes_amort) > 1 and lignes_amort[-1] == (0.0, 0.0):
+        lignes_amort.pop()
+    dates = dates[: p.nb_echeances_differe + len(lignes_amort)]
+
+    assurances = repartir(p.montant_total_assurance, len(dates))
+    frais = repartir(p.montant_total_autres_frais, len(dates))
+    lignes, solde = [], p.capital_effectif
     for k, d in enumerate(dates):
         if k < p.nb_echeances_differe:
             interet = interets[k]
@@ -293,7 +316,7 @@ def ajuster_sur_solde(p: ParametresPret, jour: date, solde_cible: float) -> Ajus
     if p.nb_echeances_differe and p.interets_differe_capitalises:
         levier, croissant = "intérêts capitalisés", True
         variante = lambda cts: replace(p, interets_capitalises_imposes=cts / 100)  # noqa: E731
-        bas, haut = 0, round(p.capital * 100)
+        bas, haut = 0, round(p.capital_effectif * 100)
     elif p.type_remboursement == "Échéances constantes":
         levier, croissant = "échéance", False  # une échéance plus forte réduit le capital restant dû
         variante = lambda cts: replace(p, echeance_imposee=cts / 100)  # noqa: E731
@@ -326,13 +349,13 @@ def exporter_pennylane(p: ParametresPret, echeancier: pd.DataFrame) -> bytes:
     ws.delete_rows(6, ws.max_row)
 
     entete = [
-        p.capital,
+        p.capital_effectif,
         p.taux,
         p.taux_assurance,
         p.montant_total_assurance,
         p.pourcentage_autres_frais,
         p.montant_total_autres_frais,
-        p.nb_echeances,
+        len(echeancier),
     ]
     for c, valeur in enumerate(entete, start=1):
         ws.cell(row=2, column=c, value=valeur)

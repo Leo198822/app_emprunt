@@ -40,7 +40,7 @@ def tableau_euros(df: pd.DataFrame):
     return affiche.style.format({c: nombre for c in affiche.columns if c != "Date"})
 
 
-titre, bouton = st.columns([4, 1], vertical_alignment="center")
+titre, bouton = st.columns([3, 1], vertical_alignment="center")
 titre.title("📅 Échéancier d'emprunt pour Pennylane")
 bouton.button("🔄 Remettre à zéro", on_click=remettre_a_zero, help="Efface toutes les informations saisies.", width="stretch")
 st.write(
@@ -63,7 +63,10 @@ premier_paiement = c1.date_input(
     format="DD/MM/YYYY",
     help="Date du premier prélèvement, différé compris. Les échéances suivantes tombent le même jour du mois.",
 )
-echeance_banque = c2.number_input(
+periodicite = c2.selectbox("Périodicité des échéances", list(PERIODICITES), key=cle("periodicite"))
+
+c1, c2 = st.columns(2)
+echeance_banque = c1.number_input(
     "Montant de l'échéance hors assurance (€)", key=cle("echeance_banque"),
     min_value=0.0,
     value=None,
@@ -71,6 +74,9 @@ echeance_banque = c2.number_input(
     format="%.2f",
     placeholder="facultatif — ex. 468,45",
     help="Échéance constante indiquée par la banque. Si vous la laissez vide, elle est calculée.",
+)
+type_remboursement = c2.selectbox(
+    "Type de remboursement", ["Échéances constantes", "Amortissement constant"], key=cle("type_remboursement")
 )
 
 c1, c2 = st.columns(2)
@@ -91,6 +97,30 @@ if nb_differe:
         key=cle("interets_capitalises"),
         horizontal=True,
     ).startswith("ajoutés")
+
+partiel = st.radio(
+    "L'emprunt est débloqué…",
+    ["en totalité", "partiellement (une partie des fonds ne sera pas versée)"],
+    key=cle("partiel"),
+    horizontal=True,
+    help="Par exemple un prêt de 10 000 € dont seuls 7 500 € ont été débloqués.",
+) != "en totalité"
+duree_reduite = True
+if partiel:
+    if echeance_banque:
+        st.caption(
+            "L'échéance de la banque étant saisie, la durée en découle : si elle est celle du prêt complet, "
+            "le remboursement s'arrête plus tôt ; si elle a été recalculée, il couvre toute la durée."
+        )
+    elif type_remboursement == "Échéances constantes":
+        duree_reduite = st.radio(
+            "Sur le montant débloqué, la banque…",
+            [
+                "garde l'échéance du prêt complet : le remboursement s'arrête plus tôt",
+                "garde la durée : l'échéance est réduite et étalée sur toute la durée",
+            ],
+            key=cle("duree_reduite"),
+        ).startswith("garde l'échéance")
 
 # --- Étape 2 : les déblocages ------------------------------------------------------------
 st.header("2. Les déblocages", divider="gray")
@@ -129,26 +159,34 @@ elif source.startswith("Saisir"):
         },
     )
     deblocages = [Deblocage(pd.Timestamp(r["Date"]).date(), float(r["Montant (€)"])) for _, r in saisie.dropna().iterrows()]
+elif partiel:
+    montant_unique = st.number_input(
+        "Montant débloqué (€)", key=cle("montant_unique"), min_value=0.0, value=None, step=100.0, format="%.2f", placeholder="ex. 7 500,00"
+    )
+    st.caption("Ce montant est considéré comme versé une période avant la 1re échéance.")
 else:
-    st.caption("Le capital est considéré comme versé en totalité un mois avant la 1re échéance.")
+    st.caption("Le capital est considéré comme versé en totalité une période avant la 1re échéance.")
+
+montant_debloque = None
+if partiel:
+    montant_debloque = round(sum(d.montant for d in deblocages), 2) if deblocages else (montant_unique if not source.startswith(("Importer", "Saisir")) else None)
 
 if deblocages:
     total = round(sum(d.montant for d in deblocages), 2)
     libelle = f"**Total des déblocages : {euros(total)}** ({len(deblocages)} déblocage{'s' if len(deblocages) > 1 else ''})"
     if not capital:
         st.info(libelle)
+    elif partiel and total < capital - 0.005:
+        st.info(f"{libelle} — reste non débloqué : {euros(capital - total)} sur {euros(capital)} empruntés.")
     elif abs(total - capital) <= 0.005:
         st.success(f"{libelle} — égal au montant emprunté.")
+        if partiel:
+            st.warning("Les fonds sont débloqués en totalité : choisissez « en totalité » à l'étape 1.")
     else:
         st.warning(f"{libelle} — écart de {euros(total - capital)} avec le montant emprunté ({euros(capital)}).")
 
 # --- Options -----------------------------------------------------------------------------
-with st.expander("Options (assurance, frais, périodicité…)"):
-    c1, c2 = st.columns(2)
-    periodicite = c1.selectbox("Périodicité", list(PERIODICITES), key=cle("periodicite"))
-    type_remboursement = c2.selectbox(
-        "Type de remboursement", ["Échéances constantes", "Amortissement constant"], key=cle("type_remboursement")
-    )
+with st.expander("Options (assurance, frais, calcul des intérêts)"):
     c1, c2, c3, c4 = st.columns([3, 1, 3, 1])
     assurance = c1.number_input("Assurance", key=cle("assurance"), min_value=0.0, value=0.0, step=0.01, format="%.2f")
     unite_assurance = c2.selectbox("Unité", ["€", "%"], key=cle("unite_assurance"), help="€ : montant total — % : taux annuel sur le capital")
@@ -171,6 +209,8 @@ manquants = [
     ]
     if valeur is None or (libelle == "le montant emprunté" and valeur == 0)
 ]
+if partiel and not montant_debloque:
+    manquants.append("le montant débloqué")
 if source.startswith("Importer") and not deblocages:
     manquants.append("le grand livre (ou choisissez une autre façon de renseigner les déblocages)")
 if manquants:
@@ -195,6 +235,8 @@ params = ParametresPret(
     assurance_en_pourcentage=unite_assurance == "%",
     autres_frais=autres_frais,
     autres_frais_en_pourcentage=unite_frais == "%",
+    montant_debloque=montant_debloque,
+    partiel_duree_reduite=duree_reduite,
 )
 with st.expander("🎯 Ajuster sur un capital restant dû connu (facultatif)"):
     st.caption(
@@ -230,10 +272,22 @@ with st.expander("🎯 Ajuster sur un capital restant dû connu (facultatif)"):
 resultat = calculer(params)
 echeancier = resultat.echeancier
 
-m1, m2, m3 = st.columns(3)
+m1, m2, m3, m4 = st.columns(4)
 m1.metric("Échéance", euros(echeancier["Échéance (€)"].iloc[params.nb_echeances_differe]))
-m2.metric("Capital remboursé", euros(resultat.capital_amorti))
-m3.metric("Total des intérêts", euros(echeancier["Intérêt (€)"].sum()))
+m2.metric(
+    "Nombre d'échéances",
+    len(echeancier),
+    delta=len(echeancier) - params.nb_echeances if len(echeancier) != params.nb_echeances else None,
+    delta_color="off",
+    help=f"Fin du remboursement le {echeancier['Date'].iloc[-1].strftime('%d/%m/%Y')}.",
+)
+m3.metric("Capital remboursé", euros(resultat.capital_amorti))
+m4.metric("Total des intérêts", euros(echeancier["Intérêt (€)"].sum()))
+if len(echeancier) < params.nb_echeances:
+    st.info(
+        f"Remboursement terminé en {len(echeancier)} échéances au lieu de {params.nb_echeances} "
+        f"(dernière échéance le {echeancier['Date'].iloc[-1].strftime('%d/%m/%Y')})."
+    )
 
 if params.nb_echeances_differe and interets_capitalises:
     st.caption(

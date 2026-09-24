@@ -7,17 +7,25 @@ plusieurs fois et génère le fichier d'import **Pennylane** (même structure qu
 
 L'écran se remplit en deux étapes ; l'échéancier se génère dès que les informations obligatoires sont saisies.
 
-1. **Le prêt** (offre de prêt) : montant emprunté, taux, date de la 1re échéance, nombre total
+1. **Le prêt** (offre de prêt) : montant emprunté, taux, date de la 1re échéance, **périodicité**
+   (mensuelle, trimestrielle, semestrielle, annuelle), type de remboursement, nombre total
    d'échéances, dont échéances de différé, et — facultatif — le montant de l'échéance indiqué par la
    banque. Si un différé est saisi : intérêts ajoutés au capital ou prélevés.
+   **Emprunt débloqué en totalité ou partiellement** : en partiel, l'échéancier porte sur le montant
+   réellement débloqué, au choix
+   - *échéance du prêt complet maintenue* : le remboursement s'arrête plus tôt (ex. prêt de 10 000 €
+     sur 80 mois à 4 %, 7 500 € débloqués → 58 échéances de 142,61 €) ;
+   - *durée maintenue* : l'échéance est recalculée sur le montant débloqué (→ 80 échéances de 106,96 €).
+   Si l'échéance de la banque est saisie, c'est elle qui détermine la durée.
 2. **Les déblocages** : import du grand livre du compte 164 exporté de Pennylane (recommandé : les
-   remboursements comptabilisés servent aussi de contrôle), saisie manuelle, ou fonds versés en une fois.
+   remboursements comptabilisés servent aussi de contrôle), saisie manuelle, ou fonds versés en une fois
+   (en déblocage partiel, saisir alors le montant débloqué). Le total des déblocages est affiché.
 3. **Ajustement (facultatif)** : sous l'échéancier, saisir une date et le capital restant dû connu à
    cette date (tableau de la banque, relevé…). L'échéancier est recalculé pour retomber exactement
    dessus : l'application ajuste les intérêts ajoutés au capital pendant le différé ou, sans différé,
    l'échéance.
 
-Les options (assurance, frais, périodicité, type de remboursement, intérêts en jours exacts) sont
+Les options (assurance, frais, intérêts en jours exacts) sont
 regroupées dans un volet repliable. Le bouton **Télécharger l'échéancier Pennylane** produit le fichier
 d'import (même structure que `modeles/Echeancier_type.xlsx`, dates au format jj/mm/aaaa).
 
