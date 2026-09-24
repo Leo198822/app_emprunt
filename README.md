@@ -28,7 +28,7 @@ L'écran se remplit en deux étapes ; l'échéancier se génère dès que les in
    dessus : l'application ajuste les intérêts ajoutés au capital pendant le différé ou, sans différé,
    l'échéance.
 
-L'**assurance** se saisit à l'étape 1 en coût mensuel (€). Les options (frais, intérêts en jours exacts) sont
+L'**assurance** se saisit à l'étape 1, en coût mensuel fixe (€) ou en % du capital restant dû. Les options (frais, intérêts en jours exacts) sont
 regroupées dans un volet repliable. Le bouton **Télécharger l'échéancier Pennylane** produit le fichier
 d'import (même structure que `modeles/Echeancier_type.xlsx`, dates au format jj/mm/aaaa).
 
@@ -68,8 +68,11 @@ Règles déduites du grand livre d'un prêt Crédit Agricole à déblocages succ
   (échéance à 0, le solde augmente), ce qui garde un solde cohérent depuis le capital de l'en-tête.
 - Dates au format français (jj/mm/aaaa) dans l'application et dans le fichier exporté.
 - Arrondis au centime ligne par ligne ; la dernière échéance solde le capital.
-- Assurance : coût mensuel saisi, multiplié par le nombre de mois de la période (× 3 en trimestriel…),
-  prélevé à chaque échéance jusqu'au terme du prêt, y compris après le solde du capital.
+- Assurance, au choix :
+  - *montant fixe* : coût mensuel saisi, multiplié par le nombre de mois de la période (× 3 en
+    trimestriel…), prélevé à chaque échéance jusqu'au terme du prêt, y compris après le solde du capital ;
+  - *% du capital restant dû* : taux annuel appliqué au capital restant dû en début de période
+    (× nombre de mois / 12) ; l'assurance diminue avec le capital et s'arrête quand il est soldé.
 - Autres frais : répartis également sur toutes les échéances.
 
 ## Lancer en local

@@ -53,7 +53,8 @@ class ParametresPret:
     echeance_imposee: float | None = None  # échéance hors assurance de l'offre bancaire, si connue
     remboursements_constates: list[float] = field(default_factory=list)  # capital remboursé (grand livre)
     interets_jours_exacts: bool = False  # amortissement : taux / 12 (banque) ; True : jours exacts / 365
-    assurance_mensuelle: float = 0.0  # coût mensuel de l'assurance, prélevé jusqu'au terme du prêt
+    assurance_mensuelle: float = 0.0  # montant fixe : coût mensuel de l'assurance, jusqu'au terme du prêt
+    assurance_taux_crd: float = 0.0  # ou taux annuel (%) appliqué au capital restant dû en début de période
     autres_frais: float = 0.0
     autres_frais_en_pourcentage: bool = False  # True : % du capital ; False : montant total
     montant_debloque: float | None = None  # déblocage partiel : montant réellement versé (None = en totalité)
@@ -86,9 +87,11 @@ class ParametresPret:
         """Coût mensuel de l'assurance ramené à la périodicité (× 3 en trimestriel, × 12 en annuel…)."""
         return round(self.assurance_mensuelle * self.mois_par_periode, 2)
 
-    @property
-    def montant_total_assurance(self) -> float:
-        return round(self.assurance_par_echeance * self.nb_echeances, 2)
+    def assurance_sur(self, capital_restant_du: float) -> float:
+        """Assurance d'une échéance : taux sur le capital restant dû, ou montant fixe."""
+        if self.assurance_taux_crd:
+            return round(max(capital_restant_du, 0.0) * self.assurance_taux_crd / 100 * self.mois_par_periode / 12, 2)
+        return self.assurance_par_echeance
 
     @property
     def montant_total_autres_frais(self) -> float:
@@ -98,7 +101,7 @@ class ParametresPret:
 
     @property
     def taux_assurance(self) -> float:
-        return 0.0  # l'assurance est saisie en montant : seul le montant total figure en en-tête
+        return self.assurance_taux_crd  # 0 pour un montant fixe : seul le montant total figure en en-tête
 
     @property
     def pourcentage_autres_frais(self) -> float:
@@ -269,7 +272,6 @@ def calculer(p: ParametresPret) -> Resultat:
 
     # Capital soldé avant la fin (déblocage partiel, échéance maintenue) : les échéances suivantes
     # restent dans l'échéancier, à 0 hors assurance et frais, jusqu'au terme prévu du prêt.
-    assurances = [p.assurance_par_echeance] * p.nb_echeances
     frais = repartir(p.montant_total_autres_frais, p.nb_echeances)
     lignes, solde = [], p.capital_effectif
     for k, d in enumerate(dates):
@@ -278,9 +280,10 @@ def calculer(p: ParametresPret) -> Resultat:
             amort = -interet if p.interets_differe_capitalises else 0.0
         else:
             interet, amort = lignes_amort[k - p.nb_echeances_differe]
+        assurance = p.assurance_sur(solde)  # capital restant dû en début de période
         solde = round(solde - amort, 2)
         paye = round(interet + amort, 2)  # nul pendant un différé capitalisé
-        lignes.append([d, interet, assurances[k], frais[k], amort, round(paye + assurances[k] + frais[k], 2), solde])
+        lignes.append([d, interet, assurance, frais[k], amort, round(paye + assurance + frais[k], 2), solde])
     echeancier = pd.DataFrame(lignes, columns=COLONNES)
     soldees = [k + 1 for k in range(p.nb_echeances_differe, len(lignes)) if lignes[k][6] <= 0.005]
     return Resultat(echeancier, base, calcules, capitalises, echeance, soldees[0] if soldees else len(lignes))
@@ -354,7 +357,7 @@ def exporter_pennylane(p: ParametresPret, echeancier: pd.DataFrame) -> bytes:
         p.capital_effectif,
         p.taux,
         p.taux_assurance,
-        p.montant_total_assurance,
+        round(float(echeancier["Assurance (€)"].sum()), 2),
         p.pourcentage_autres_frais,
         p.montant_total_autres_frais,
         len(echeancier),

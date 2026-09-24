@@ -190,6 +190,28 @@ def test_partiel_l_assurance_continue_apres_le_solde_du_capital():
     assert (e["Échéance (€)"].iloc[58:] == 3.00).all()
 
 
+def test_assurance_en_pourcentage_du_capital_restant_du():
+    e = calculer_echeancier(pret_partiel(assurance_taux_crd=0.36))
+    # 1re échéance : 7 500 € restant dû x 0,36 % / 12
+    assert e["Assurance (€)"].iloc[0] == pytest.approx(2.25)
+    # 2e échéance : sur le capital restant dû après la 1re
+    assert e["Assurance (€)"].iloc[1] == pytest.approx(round(e["Solde (€)"].iloc[0] * 0.0036 / 12, 2))
+    # L'assurance diminue avec le capital et s'arrête une fois celui-ci soldé (58e échéance).
+    assert e["Assurance (€)"].is_monotonic_decreasing
+    assert (e["Assurance (€)"].iloc[58:] == 0).all()
+
+
+def test_assurance_en_pourcentage_trimestrielle_et_export(tmp_path):
+    p = pret_partiel(assurance_taux_crd=0.36, periodicite="Trimestrielle", nb_echeances=27)
+    e = calculer_echeancier(p)
+    assert e["Assurance (€)"].iloc[0] == pytest.approx(6.75)  # 7 500 x 0,36 % x 3 / 12
+    fichier = tmp_path / "assurance.xlsx"
+    fichier.write_bytes(exporter_pennylane(p, e))
+    ws = openpyxl.load_workbook(fichier).active
+    assert ws["C2"].value == 0.36
+    assert ws["D2"].value == pytest.approx(round(e["Assurance (€)"].sum(), 2))
+
+
 def test_assurance_mensuelle_ramenee_a_la_periodicite():
     e = calculer_echeancier(pret_partiel(assurance_mensuelle=12.5, periodicite="Trimestrielle", nb_echeances=27))
     assert set(e["Assurance (€)"]) == {37.50}  # 3 mois x 12,50 €

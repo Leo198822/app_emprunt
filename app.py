@@ -89,17 +89,28 @@ nb_differe = c2.number_input(
     help="Premières échéances sans remboursement de capital, pendant le déblocage des fonds.",
 )
 
-c1, _ = st.columns(2)
-assurance_mensuelle = c1.number_input(
-    "Coût mensuel de l'assurance (€)",
-    key=cle("assurance_mensuelle"),
+c1, c2 = st.columns(2)
+mode_assurance = c2.selectbox(
+    "Calcul de l'assurance",
+    ["Montant fixe (€ par mois)", "% du capital restant dû (taux annuel)"],
+    key=cle("mode_assurance"),
+)
+assurance_en_taux = mode_assurance.startswith("%")
+valeur_assurance = c1.number_input(
+    "Taux annuel de l'assurance (%)" if assurance_en_taux else "Coût mensuel de l'assurance (€)",
+    key=cle("assurance_taux" if assurance_en_taux else "assurance_mensuelle"),
     min_value=0.0,
     value=None,
     step=0.01,
-    format="%.2f",
-    placeholder="facultatif — ex. 12,50",
-    help="Montant prélevé chaque mois. En périodicité trimestrielle, semestrielle ou annuelle, il est multiplié "
-    "par le nombre de mois de la période. L'assurance court jusqu'au terme du prêt.",
+    format="%.3f" if assurance_en_taux else "%.2f",
+    placeholder="facultatif — ex. 0,300" if assurance_en_taux else "facultatif — ex. 12,50",
+    help=(
+        "Taux annuel appliqué au capital restant dû en début de chaque période : l'assurance diminue au fil des "
+        "remboursements et s'arrête quand le capital est soldé."
+        if assurance_en_taux
+        else "Montant prélevé chaque mois. En périodicité trimestrielle, semestrielle ou annuelle, il est multiplié "
+        "par le nombre de mois de la période. L'assurance court jusqu'au terme du prêt."
+    ),
 )
 
 interets_capitalises = True
@@ -265,7 +276,8 @@ params = ParametresPret(
     periodicite=periodicite,
     type_remboursement=type_remboursement,
     interets_jours_exacts=jours_exacts,
-    assurance_mensuelle=assurance_mensuelle or 0.0,
+    assurance_mensuelle=0.0 if assurance_en_taux else (valeur_assurance or 0.0),
+    assurance_taux_crd=(valeur_assurance or 0.0) if assurance_en_taux else 0.0,
     autres_frais=autres_frais,
     autres_frais_en_pourcentage=unite_frais == "%",
     montant_debloque=montant_debloque,
@@ -307,7 +319,7 @@ echeancier = resultat.echeancier
 
 m1, m2, m3, m4 = st.columns(4)
 m1.metric(
-    "Échéance (assurance comprise)" if params.assurance_mensuelle else "Échéance",
+    "Échéance (assurance comprise)" if params.assurance_mensuelle or params.assurance_taux_crd else "Échéance",
     euros(echeancier["Échéance (€)"].iloc[params.nb_echeances_differe]),
 )
 m2.metric(
