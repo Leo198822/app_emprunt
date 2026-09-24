@@ -18,7 +18,8 @@ L'écran se remplit en deux étapes ; l'échéancier se génère dès que les in
      garde la durée saisie, les échéances suivantes restant à 0 € hors assurance et frais ;
    - *durée maintenue* : l'échéance est recalculée sur le montant débloqué (→ 80 échéances de 106,96 €).
    Si l'échéance de la banque est saisie, c'est elle qui détermine quand le capital est soldé.
-   Des déblocages supérieurs au montant emprunté bloquent la génération de l'échéancier.
+   Des déblocages supérieurs au montant emprunté, ou un 1er déblocage postérieur à la 1re échéance,
+   bloquent la génération de l'échéancier.
 2. **Les déblocages** : import du grand livre du compte 164 exporté de Pennylane (recommandé : les
    remboursements comptabilisés servent aussi de contrôle), saisie manuelle, ou fonds versés en une fois
    (en déblocage partiel, saisir alors le montant débloqué). Le total des déblocages est affiché.

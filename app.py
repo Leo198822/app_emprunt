@@ -171,6 +171,17 @@ montant_debloque = None
 if partiel:
     montant_debloque = round(sum(d.montant for d in deblocages), 2) if deblocages else (montant_unique if not source.startswith(("Importer", "Saisir")) else None)
 
+deblocage_tardif = None
+if deblocages and premier_paiement:
+    premier_deblocage = min(d.date for d in deblocages)
+    if premier_deblocage > premier_paiement:
+        deblocage_tardif = premier_deblocage
+        st.error(
+            f"⛔ Le 1er déblocage ({premier_deblocage.strftime('%d/%m/%Y')}) intervient après la date de la 1re "
+            f"échéance ({premier_paiement.strftime('%d/%m/%Y')}) : un remboursement ne peut pas précéder le versement "
+            "des fonds. Corrigez la date du déblocage ou celle de la 1re échéance : l'échéancier ne peut pas être généré."
+        )
+
 depassement = None
 montant_verse = round(sum(d.montant for d in deblocages), 2) if deblocages else (montant_debloque or 0)
 if capital and montant_verse > capital + 0.005:
@@ -224,8 +235,9 @@ if source.startswith("Importer") and not deblocages:
 if manquants:
     st.info("Pour générer l'échéancier, renseignez : " + ", ".join(manquants) + ".")
     st.stop()
-if depassement:
-    st.error("⛔ Échéancier non généré : les déblocages dépassent le montant emprunté (voir l'étape 2).")
+if depassement or deblocage_tardif:
+    motif = "les déblocages dépassent le montant emprunté" if depassement else "le 1er déblocage est postérieur à la 1re échéance"
+    st.error(f"⛔ Échéancier non généré : {motif} (voir l'étape 2).")
     st.stop()
 
 params = ParametresPret(
@@ -312,7 +324,8 @@ if remboursements is not None and not remboursements.empty:
     if controle["Écart (€)"].abs().max() <= 0.02:
         st.success(f"✅ Contrôle : les {len(controle)} remboursements de capital du grand livre sont retrouvés au centime.")
     else:
-        st.warning("⚠️ Le capital remboursé en comptabilité diffère de l'échéancier : vérifiez l'échéance et le tableau de la banque.")
+        st.warning("⚠️ Le capital remboursé en comptabilité diffère de l'échéancier : vérifiez l'échéance et le différé, "
+            "ou utilisez l'ajustement sur un capital restant dû connu.")
         st.dataframe(tableau_euros(controle), hide_index=True)
 
 st.download_button(
