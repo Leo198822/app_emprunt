@@ -461,10 +461,32 @@ def lire_grand_livre(fichier) -> tuple[list[Deblocage], pd.DataFrame]:
 
 def comparer(echeancier: pd.DataFrame, remboursements: pd.DataFrame) -> pd.DataFrame:
     """Rapproche le capital remboursé en comptabilité de l'amortissement calculé, mois par mois."""
-    calc = echeancier[echeancier["Amortissement (€)"] > 0][["Date", "Amortissement (€)"]].copy()
+    colonnes = ["Date", "Amortissement (€)", "Assurance (€)", "Autres frais (€)", "Échéance (€)"]
+    calc = echeancier[echeancier["Amortissement (€)"] > 0][colonnes].copy()
     calc["Mois"] = [d.strftime("%Y-%m") for d in calc["Date"]]
     reel = remboursements.copy()
     reel["Mois"] = [d.strftime("%Y-%m") for d in reel["Date"]]
     comp = reel.drop(columns="Date").merge(calc, on="Mois", how="left")
     comp["Écart (€)"] = (comp["Capital remboursé (€)"] - comp["Amortissement (€)"]).round(2)
-    return comp[["Date", "Capital remboursé (€)", "Amortissement (€)", "Écart (€)"]]
+    return comp[["Date", "Capital remboursé (€)", "Amortissement (€)", "Écart (€)", "Assurance (€)", "Autres frais (€)", "Échéance (€)"]]
+
+
+def diagnostic_controle(controle: pd.DataFrame) -> str | None:
+    """Ce que contiennent les débits du compte 164, s'ils correspondent au centime à une composante de
+    l'échéancier : « capital », « capital + assurance », « capital + assurance + frais », « capital + frais »
+    ou « échéance complète ». None si aucune ne correspond."""
+    c = controle.dropna(subset=["Amortissement (€)"])
+    if c.empty:
+        return None
+    a, ass, fr = c["Amortissement (€)"], c["Assurance (€)"], c["Autres frais (€)"]
+    candidats = {
+        "capital": a,
+        "capital + assurance": a + ass,
+        "capital + assurance + frais": a + ass + fr,
+        "capital + frais": a + fr,
+        "échéance complète": c["Échéance (€)"],
+    }
+    for nom, attendu in candidats.items():
+        if ((c["Capital remboursé (€)"] - attendu).abs() <= 0.02).all():
+            return nom
+    return None

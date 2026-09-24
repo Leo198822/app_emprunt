@@ -6,6 +6,7 @@ import openpyxl
 import pytest
 
 from echeancier import (
+    diagnostic_controle,
     ajuster_sur_solde,
     calculer,
     MODELE_PENNYLANE,
@@ -341,6 +342,20 @@ def test_proratisation_sur_le_pret_141():
     assert proratisee["Échéance (€)"].iloc[3] < totale["Échéance (€)"].iloc[3]  # avril : fonds pas tous versés
     assert proratisee["Amortissement (€)"].sum() == pytest.approx(totale["Amortissement (€)"].sum())
     assert proratisee["Solde (€)"].iloc[-1] == pytest.approx(0)
+
+
+def test_diagnostic_du_controle_avec_le_grand_livre():
+    p = pret_banque(468.45)
+    p.interets_capitalises_imposes = 185.76
+    p.assurance_mensuelle = 3.12
+    e = calculer_echeancier(p)
+    _, remboursements = lire_grand_livre(GRAND_LIVRE)
+    assert diagnostic_controle(comparer(e, remboursements)) == "capital"
+    # Grand livre où l'échéance est passée en totalité au 164 (capital + assurance).
+    avec_assurance = remboursements.assign(**{"Capital remboursé (€)": remboursements["Capital remboursé (€)"] + 3.12})
+    assert diagnostic_controle(comparer(e, avec_assurance)) == "capital + assurance"
+    fausse = remboursements.assign(**{"Capital remboursé (€)": remboursements["Capital remboursé (€)"] + 10})
+    assert diagnostic_controle(comparer(e, fausse)) is None
 
 
 def test_export_respecte_le_fichier_type(tmp_path):

@@ -11,6 +11,7 @@ from echeancier import (
     ajuster_sur_solde,
     calculer,
     comparer,
+    diagnostic_controle,
     exporter_pennylane,
     lire_grand_livre,
 )
@@ -413,7 +414,7 @@ echeancier = resultat.echeancier
 
 m1, m2, m3, m4 = st.columns(4)
 m1.metric(
-    "Échéance (assurance comprise)" if params.assurance_mensuelle or params.assurance_taux_crd else "Échéance",
+    "Échéance (ass. comprise)" if params.assurance_mensuelle or params.assurance_taux_crd else "Échéance",
     euros(echeancier["Échéance (€)"].iloc[params.nb_echeances_differe :].mode().iloc[0]),
 )
 m2.metric(
@@ -445,14 +446,35 @@ if params.nb_echeances_differe and interets_capitalises:
     )
 
 if remboursements is not None and not remboursements.empty:
+    st.subheader("Contrôle avec le grand livre")
     controle = comparer(echeancier, remboursements)
-    if controle["Écart (€)"].abs().max() <= 0.02:
-        st.success(f"✅ Contrôle : les {len(controle)} remboursements de capital du grand livre sont retrouvés au centime.")
+    nature = diagnostic_controle(controle)
+    n = len(controle)
+    if nature == "capital":
+        st.success(f"✅ Les {n} remboursements de capital du grand livre sont retrouvés au centime.")
+    elif nature:
+        st.info(
+            f"ℹ️ Les {n} remboursements du compte 164 correspondent au centime à **{nature}** de l'échéancier, "
+            "et non au seul capital : dans la comptabilité, l'échéance a été passée en totalité au compte d'emprunt. "
+            "L'échéancier est correct ; c'est l'écriture comptable qui mélange capital et "
+            + ("assurance/frais" if "frais" in nature else "assurance" if "assurance" in nature else "intérêts, assurance et frais")
+            + " (à reclasser le cas échéant)."
+        )
     else:
-        st.warning("⚠️ Le capital remboursé en comptabilité diffère de l'échéancier : vérifiez l'échéance et le différé, "
-            "ou utilisez l'ajustement sur un capital restant dû connu.")
-        st.dataframe(tableau_euros(controle), hide_index=True)
+        st.warning(
+            "⚠️ Le capital remboursé en comptabilité diffère de l'échéancier : vérifiez l'échéance et le différé, "
+            "ou utilisez l'ajustement sur un capital restant dû connu."
+        )
+    with st.expander("Détail du contrôle : grand livre / échéancier"):
+        st.dataframe(
+            tableau_euros(controle[["Date", "Capital remboursé (€)", "Amortissement (€)", "Écart (€)"]].rename(
+                columns={"Capital remboursé (€)": "Débit compte 164 (€)", "Amortissement (€)": "Capital échéancier (€)"}
+            )),
+            hide_index=True,
+            width="stretch",
+        )
 
+st.subheader("Tableau d'échéancier (fichier Pennylane)")
 st.download_button(
     "📥 Télécharger l'échéancier Pennylane (.xlsx)",
     data=exporter_pennylane(params, echeancier),
