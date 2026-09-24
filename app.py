@@ -35,31 +35,42 @@ def remettre_a_zero() -> None:
     st.session_state["reinitialisations"] = st.session_state.get("reinitialisations", 0) + 1
 
 
-def editer_deblocages(initial: pd.DataFrame, cle_tableau: str) -> list[Deblocage]:
-    """Tableau modifiable des déblocages : correction des cellules, ajout de lignes et case « Supprimer »."""
+def editer_deblocages(initial: pd.DataFrame, cle_tableau: str, annulable: bool = False) -> list[Deblocage]:
+    """Tableau modifiable des déblocages : correction des cellules, ajout de lignes, suppression par la case 🗑️.
+
+    Cocher 🗑️ retire la ligne immédiatement : les lignes restantes (corrections comprises) sont conservées
+    et le tableau est recréé sans elle.
+    """
+    donnees, version = f"{cle_tableau}_donnees", f"{cle_tableau}_version"
+    if donnees not in st.session_state:
+        st.session_state[donnees], st.session_state[version] = initial.reset_index(drop=True), 0
     st.caption(
         "✏️ **Corriger** : double-cliquez sur une date ou un montant.  \n"
-        "🗑️ **Supprimer** : cochez la case de la colonne « Supprimer » (décochez-la pour reprendre la ligne).  \n"
-        "➕ **Ajouter** : remplissez la ligne vide en bas du tableau."
+        "🗑️ **Supprimer** : cliquez sur la case 🗑️ de la ligne, elle disparaît"
+        + (" (« ↺ Annuler » pour la retrouver)" if annulable else "")
+        + ".  \n➕ **Ajouter** : remplissez la ligne vide en bas du tableau."
     )
     saisie = st.data_editor(
-        initial.assign(Supprimer=False),
-        key=cle_tableau,
+        st.session_state[donnees].assign(Supprimer=False),
+        key=f"{cle_tableau}_{st.session_state[version]}",
         num_rows="dynamic",
         width="stretch",
         hide_index=True,
+        column_order=["Supprimer", "Date", "Montant (€)"],
         column_config={
+            "Supprimer": st.column_config.CheckboxColumn("🗑️", default=False, width="small", help="Supprimer la ligne"),
             "Date": st.column_config.DateColumn("Date du déblocage", format="DD/MM/YYYY", required=True),
             "Montant (€)": st.column_config.NumberColumn("Montant (€)", min_value=0.0, format="%.2f", required=True),
-            "Supprimer": st.column_config.CheckboxColumn("🗑️ Supprimer", default=False, width="small"),
         },
     )
-    saisie = saisie.dropna(subset=["Date", "Montant (€)"])
     supprimees = saisie["Supprimer"].fillna(False).astype(bool)
     if supprimees.any():
-        st.caption(f"{int(supprimees.sum())} ligne(s) supprimée(s) : elles ne sont pas prises en compte dans le calcul.")
+        st.session_state[donnees] = saisie[~supprimees].drop(columns="Supprimer").reset_index(drop=True)
+        st.session_state[version] += 1
+        st.rerun()
+    saisie = saisie.dropna(subset=["Date", "Montant (€)"])
     return sorted(
-        (Deblocage(pd.Timestamp(r["Date"]).date(), round(float(r["Montant (€)"]), 2)) for _, r in saisie[~supprimees].iterrows()),
+        (Deblocage(pd.Timestamp(r["Date"]).date(), round(float(r["Montant (€)"]), 2)) for _, r in saisie.iterrows()),
         key=lambda d: d.date,
     )
 
@@ -233,6 +244,7 @@ if source.startswith("Importer"):
                 pd.DataFrame({"Date": pd.to_datetime([d.date for d in importes]), "Montant (€)": [d.montant for d in importes]}),
                 # Nouvelle clé pour chaque fichier importé (ou retour au grand livre) : le tableau repart des lignes repérées.
                 cle(f"deblocages_{grand_livre.name}_{grand_livre.size}_{st.session_state.get('versions_deblocages', 0)}"),
+                annulable=True,
             )
 elif source.startswith("Saisir"):
     deblocages = editer_deblocages(
