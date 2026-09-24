@@ -6,7 +6,6 @@ import openpyxl
 import pytest
 
 from echeancier import (
-    avec_lignes_deblocage,
     ajuster_sur_solde,
     calculer,
     MODELE_PENNYLANE,
@@ -342,37 +341,6 @@ def test_proratisation_sur_le_pret_141():
     assert proratisee["Échéance (€)"].iloc[3] < totale["Échéance (€)"].iloc[3]  # avril : fonds pas tous versés
     assert proratisee["Amortissement (€)"].sum() == pytest.approx(totale["Amortissement (€)"].sum())
     assert proratisee["Solde (€)"].iloc[-1] == pytest.approx(0)
-
-
-def test_lignes_de_deblocage_pour_pennylane(tmp_path):
-    p = pret_banque(468.45)
-    p.interets_capitalises_imposes = 185.76
-    e = calculer_echeancier(p)
-    tout = avec_lignes_deblocage(p, e)
-    assert len(tout) == 60 + 5
-    deblocages = tout[tout["Échéance (€)"] < 0]
-    assert deblocages["Amortissement (€)"].tolist() == [-18_319.0, -1_226.75, -2_126.97, -720.43, -1_606.85]
-    assert (deblocages[["Intérêt (€)", "Assurance (€)", "Autres frais (€)"]] == 0).all().all()
-    # Le solde enchaîné ligne à ligne retombe sur le capital restant dû réel de chaque échéance.
-    echeances = tout[tout["Échéance (€)"] >= 0].reset_index(drop=True)
-    assert echeances["Solde (€)"].tolist() == pytest.approx(e["Solde (€)"].tolist())
-    # Même date (05/02/2026) : le déblocage précède l'échéance.
-    le_05_02 = tout[tout["Date"] == date(2026, 2, 5)]
-    assert le_05_02["Échéance (€)"].tolist()[0] < 0
-    fichier = tmp_path / "deblocages.xlsx"
-    fichier.write_bytes(exporter_pennylane(p, tout))
-    ws = openpyxl.load_workbook(fichier).active
-    assert ws.max_row == 5 + 65
-    assert ws["G2"].value == 60
-    assert ws["E6"].value == -18_319.0 and ws["G6"].value == 18_319.0
-
-
-def test_lignes_de_deblocage_fonds_verses_en_une_fois():
-    p = pret_simple()
-    p.deblocages = []
-    tout = avec_lignes_deblocage(p, calculer_echeancier(p))
-    assert tout["Date"].iloc[0] == date(2025, 12, 10) and tout["Amortissement (€)"].iloc[0] == -24_000
-    assert tout["Solde (€)"].iloc[-1] == pytest.approx(0)
 
 
 def test_export_respecte_le_fichier_type(tmp_path):

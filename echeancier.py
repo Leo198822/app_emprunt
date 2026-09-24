@@ -415,25 +415,6 @@ def ajuster_sur_solde(p: ParametresPret, jour: date, solde_cible: float) -> Ajus
     return Ajustement(parametres, date_echeance, solde, levier)
 
 
-def avec_lignes_deblocage(p: ParametresPret, echeancier: pd.DataFrame) -> pd.DataFrame:
-    """Ajoute une ligne par déblocage (amortissement et échéance négatifs = fonds reçus).
-
-    Le solde part alors de 0 et s'enchaîne ligne à ligne (solde précédent − amortissement) ; il retombe
-    sur le capital restant dû réel de chaque échéance. À date égale, le déblocage précède l'échéance.
-    """
-    deblocages = sorted(p.deblocages, key=lambda d: d.date) or [
-        Deblocage(ajouter_mois(echeancier["Date"].iloc[0], -p.mois_par_periode, p.jour_prelevement), p.capital_effectif)
-    ]
-    lignes = pd.DataFrame(
-        [[d.date, 0.0, 0.0, 0.0, -d.montant, -d.montant, 0.0] for d in deblocages], columns=COLONNES
-    )
-    lignes["_ordre"], echeances = 0, echeancier.assign(_ordre=1)
-    tout = pd.concat([lignes, echeances], ignore_index=True).sort_values(["Date", "_ordre"], kind="stable")
-    tout = tout.drop(columns="_ordre").reset_index(drop=True)
-    tout["Solde (€)"] = (-tout["Amortissement (€)"]).cumsum().round(2).clip(lower=0) + 0.0
-    return tout
-
-
 def exporter_pennylane(p: ParametresPret, echeancier: pd.DataFrame) -> bytes:
     """Remplit le fichier type Pennylane (en-tête lignes 1-2, échéances à partir de la ligne 6)."""
     wb = openpyxl.load_workbook(MODELE_PENNYLANE)
@@ -449,7 +430,7 @@ def exporter_pennylane(p: ParametresPret, echeancier: pd.DataFrame) -> bytes:
         round(float(echeancier["Assurance (€)"].sum()), 2),
         p.pourcentage_autres_frais,
         p.montant_total_autres_frais,
-        p.nb_echeances,  # nombre d'échéances (hors lignes de déblocage éventuelles)
+        len(echeancier),
     ]
     for c, valeur in enumerate(entete, start=1):
         ws.cell(row=2, column=c, value=valeur)
