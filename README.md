@@ -37,6 +37,8 @@ L'écran se remplit en deux étapes ; l'échéancier se génère dès que les in
 Le volet **Options**, placé entre l'étape 1 et l'étape 2, regroupe l'assurance (aucune, coût mensuel fixe en €
 ou % du capital restant dû), les autres frais (aucun, montant total ou % du montant emprunté) et le calcul des
 intérêts en jours exacts ; il est replié par défaut et chaque champ de saisie n'apparaît qu'une fois le mode choisi.
+La case **🧪 Test : inclure les lignes de déblocage** (décochée par défaut) ajoute une ligne par déblocage
+(amortissement et échéance négatifs, solde partant de 0) pour essayer l'import dans Pennylane.
 Le bouton **Télécharger l'échéancier Pennylane** produit le fichier
 d'import (même structure que `modeles/Echeancier_type.xlsx`, dates au format jj/mm/aaaa).
 

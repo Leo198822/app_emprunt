@@ -9,6 +9,7 @@ from echeancier import (
     ParametresPret,
     ajouter_mois,
     ajuster_sur_solde,
+    avec_lignes_deblocage,
     calculer,
     comparer,
     exporter_pennylane,
@@ -400,12 +401,25 @@ if remboursements is not None and not remboursements.empty:
             "ou utilisez l'ajustement sur un capital restant dû connu.")
         st.dataframe(tableau_euros(controle), hide_index=True)
 
+lignes_deblocage = st.checkbox(
+    "🧪 Test : inclure les lignes de déblocage dans le fichier Pennylane",
+    key=cle("lignes_deblocage"),
+    help="Ajoute une ligne à la date de chaque déblocage (amortissement et échéance négatifs = fonds reçus). "
+    "Le solde part alors de 0 et suit les versements. Décochez pour revenir au fichier habituel.",
+)
+export = avec_lignes_deblocage(params, echeancier) if lignes_deblocage else echeancier
+if lignes_deblocage:
+    st.caption(
+        f"{len(export) - len(echeancier)} ligne(s) de déblocage ajoutée(s) au fichier et au tableau ci-dessous ; "
+        f"le nombre d'échéances de l'en-tête reste {params.nb_echeances}."
+    )
+
 st.download_button(
     "📥 Télécharger l'échéancier Pennylane (.xlsx)",
-    data=exporter_pennylane(params, echeancier),
+    data=exporter_pennylane(params, export),
     file_name="Echeancier_pennylane.xlsx",
     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     type="primary",
     width="stretch",
 )
-st.dataframe(tableau_euros(echeancier), width="stretch", hide_index=True, height=420)
+st.dataframe(tableau_euros(export), width="stretch", hide_index=True, height=420)
