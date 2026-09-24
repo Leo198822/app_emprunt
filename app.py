@@ -36,38 +36,47 @@ def remettre_a_zero() -> None:
 
 
 def editer_deblocages(initial: pd.DataFrame, cle_tableau: str, annulable: bool = False) -> list[Deblocage]:
-    """Tableau modifiable des déblocages : correction des cellules, ajout de lignes, suppression par la case 🗑️.
-
-    Cocher 🗑️ retire la ligne immédiatement : les lignes restantes (corrections comprises) sont conservées
-    et le tableau est recréé sans elle.
-    """
+    """Tableau modifiable des déblocages : correction des cellules, ajout de lignes, et suppression des lignes
+    cochées (colonne « Sélection ») par le bouton 🗑️. Les corrections et ajouts déjà faits sont conservés."""
     donnees, version = f"{cle_tableau}_donnees", f"{cle_tableau}_version"
     if donnees not in st.session_state:
         st.session_state[donnees], st.session_state[version] = initial.reset_index(drop=True), 0
-    st.caption(
-        "✏️ **Corriger** : double-cliquez sur une date ou un montant.  \n"
-        "🗑️ **Supprimer** : cliquez sur la case 🗑️ de la ligne, elle disparaît"
-        + (" (« ↺ Annuler » pour la retrouver)" if annulable else "")
-        + ".  \n➕ **Ajouter** : remplissez la ligne vide en bas du tableau."
-    )
+
+    barre = st.container()  # consignes et bouton 🗑️, affichés au-dessus du tableau
     saisie = st.data_editor(
-        st.session_state[donnees].assign(Supprimer=False),
+        st.session_state[donnees].assign(Sélection=False),
         key=f"{cle_tableau}_{st.session_state[version]}",
         num_rows="dynamic",
         width="stretch",
         hide_index=True,
-        column_order=["Supprimer", "Date", "Montant (€)"],
+        column_order=["Sélection", "Date", "Montant (€)"],
         column_config={
-            "Supprimer": st.column_config.CheckboxColumn("🗑️", default=False, width="small", help="Supprimer la ligne"),
+            "Sélection": st.column_config.CheckboxColumn("☑", default=False, width="small", help="Sélectionner la ligne"),
             "Date": st.column_config.DateColumn("Date du déblocage", format="DD/MM/YYYY", required=True),
             "Montant (€)": st.column_config.NumberColumn("Montant (€)", min_value=0.0, format="%.2f", required=True),
         },
     )
-    supprimees = saisie["Supprimer"].fillna(False).astype(bool)
-    if supprimees.any():
-        st.session_state[donnees] = saisie[~supprimees].drop(columns="Supprimer").reset_index(drop=True)
-        st.session_state[version] += 1
-        st.rerun()
+    selection = saisie["Sélection"].fillna(False).astype(bool)
+    nb = int(selection.sum())
+    with barre:
+        consignes, bouton = st.columns([3, 1], vertical_alignment="bottom")
+        consignes.caption(
+            "✏️ **Corriger** : double-cliquez sur une date ou un montant.  \n"
+            "🗑️ **Supprimer** : cochez la ou les lignes (colonne ☑), puis cliquez sur « 🗑️ Supprimer ».  \n"
+            "➕ **Ajouter** : remplissez la ligne vide en bas du tableau."
+            + ("  \n↺ **Annuler** revient aux déblocages du grand livre." if annulable else "")
+        )
+        if bouton.button(
+            f"🗑️ Supprimer ({nb})" if nb else "🗑️ Supprimer",
+            key=f"{cle_tableau}_supprimer",
+            disabled=nb == 0,
+            help="Supprime les lignes cochées" if nb else "Cochez d'abord une ou plusieurs lignes",
+            width="stretch",
+        ):
+            st.session_state[donnees] = saisie[~selection].drop(columns="Sélection").reset_index(drop=True)
+            st.session_state[version] += 1
+            st.rerun()
+
     saisie = saisie.dropna(subset=["Date", "Montant (€)"])
     return sorted(
         (Deblocage(pd.Timestamp(r["Date"]).date(), round(float(r["Montant (€)"]), 2)) for _, r in saisie.iterrows()),
