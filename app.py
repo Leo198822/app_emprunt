@@ -391,7 +391,15 @@ with st.expander("🎯 Ajuster sur un capital restant dû connu (facultatif)"):
     if date_reference and solde_reference is not None:
         ajustement = ajuster_sur_solde(params, date_reference, solde_reference)
         if ajustement is None:
-            st.warning("Ajustement impossible : la date est antérieure à la 1re échéance, ou le type de remboursement ne s'y prête pas.")
+            st.error("⛔ Ajustement impossible : la date saisie est antérieure à la 1re échéance.")
+        elif not ajustement.possible:
+            bas, haut = ajustement.fourchette or (ajustement.solde_obtenu, ajustement.solde_obtenu)
+            st.error(
+                f"⛔ Ajustement impossible : à l'échéance du {ajustement.date_echeance.strftime('%d/%m/%Y')}, le capital "
+                + (f"restant dû ne peut être que de {euros(bas)}" if abs(haut - bas) < 0.01 else f"restant dû ne peut varier qu'entre {euros(bas)} et {euros(haut)}")
+                + f" avec ces paramètres (saisi : {euros(solde_reference)}). Vérifiez la date, le montant, le taux, le différé "
+                "ou l'échéance saisie. L'échéancier n'a pas été modifié."
+            )
         else:
             params = ajustement.parametres
             precision = abs(ajustement.solde_obtenu - solde_reference)
@@ -422,7 +430,13 @@ m2.metric(
     len(echeancier),
     help=f"Dernière échéance le {echeancier['Date'].iloc[-1].strftime('%d/%m/%Y')}.",
 )
-m3.metric("Capital remboursé", euros(resultat.capital_amorti))
+capitalises_rembourses = round(resultat.capital_amorti - params.capital_effectif, 2)
+m3.metric(
+    "Capital remboursé",
+    euros(params.capital_effectif),
+    help="Capital versé, jamais plus que le montant emprunté"
+    + (f" ; s'y ajoutent {euros(capitalises_rembourses)} d'intérêts capitalisés pendant le différé." if capitalises_rembourses > 0 else "."),
+)
 m4.metric("Total des intérêts", euros(echeancier["Intérêt (€)"].sum()))
 rang = resultat.rang_capital_solde
 if rang < len(echeancier):
@@ -431,6 +445,14 @@ if rang < len(echeancier):
         f"Capital soldé à l'échéance n°{rang} ({echeancier['Date'].iloc[rang - 1].strftime('%d/%m/%Y')}). "
         f"Les {reste} échéance{'s' if reste > 1 else ''} suivante{'s' if reste > 1 else ''}, jusqu'au "
         f"{echeancier['Date'].iloc[-1].strftime('%d/%m/%Y')}, restent dans l'échéancier à 0 € hors assurance et frais."
+    )
+
+amortissement = echeancier.iloc[params.nb_echeances_differe : -1]
+if ((amortissement["Amortissement (€)"] <= 0) & (amortissement["Solde (€)"] > 0.005)).any():
+    st.warning(
+        f"⚠️ L'échéance est trop faible pour couvrir les intérêts : certaines échéances ne remboursent aucun capital, "
+        f"et la dernière échéance ({euros(echeancier['Échéance (€)'].iloc[-1])}) solde le capital restant. "
+        "Vérifiez le montant de l'échéance saisi."
     )
 
 if params.echeance_imposee and resultat.echeance_constante and (params.assurance_mensuelle or params.assurance_taux_crd):

@@ -6,6 +6,8 @@ import openpyxl
 import pytest
 
 from echeancier import (
+    plafond_interets_capitalises,
+    solde_a_la_date,
     diagnostic_controle,
     ajuster_sur_solde,
     calculer,
@@ -356,6 +358,55 @@ def test_diagnostic_du_controle_avec_le_grand_livre():
     assert diagnostic_controle(comparer(e, avec_assurance)) == "capital + assurance"
     fausse = remboursements.assign(**{"Capital remboursé (€)": remboursements["Capital remboursé (€)"] + 10})
     assert diagnostic_controle(comparer(e, fausse)) is None
+
+
+def test_echeance_saisie_sans_differe_ne_modifie_pas_le_capital():
+    for echeance in (20.0, 358.05, 434.25, 5_000.0):
+        r = calculer(replace(pret_simple(), echeance_imposee=echeance))
+        assert r.capital_amorti == pytest.approx(24_000)
+        assert (r.echeancier["Amortissement (€)"] >= 0).all()  # jamais de capital négatif
+        assert r.echeancier["Amortissement (€)"].sum() == pytest.approx(24_000)
+
+
+def test_pret_a_taux_nul_jamais_d_interets_capitalises():
+    p = ParametresPret(capital=4_447.14, taux=0.0, nb_echeances=72, nb_echeances_differe=2,
+                       date_premier_paiement=date(2025, 6, 15), jour_prelevement=15)
+    for cible in (3_000, 4_000):
+        a = ajuster_sur_solde(p, date(2026, 7, 20), cible)
+        assert a.possible and a.levier == "échéance" and abs(a.ecart) <= 0.5
+        r = calculer(a.parametres)
+        assert r.capital_amorti == pytest.approx(4_447.14)  # rien au-delà du capital emprunté
+
+
+def test_ajustement_impossible_ne_modifie_rien():
+    p = pret_deux_deblocages()
+    a = ajuster_sur_solde(p, date(2026, 6, 10), 12_000)  # plus que le capital emprunté
+    assert not a.possible and a.parametres == p
+    assert a.fourchette[1] <= 10_000
+    b = ajuster_sur_solde(replace(pret_banque(), interets_differe_capitalises=False), date(2026, 2, 10), 15_000)
+    assert not b.possible  # pendant le différé, le solde ne dépend pas de l'échéance
+
+
+def test_ajustement_retombe_sur_le_solde_saisi():
+    p = pret_deux_deblocages()
+    for jour, cible in ((date(2026, 6, 10), 7_000), (date(2027, 1, 10), 3_000), (date(2026, 1, 10), 5_800)):
+        a = ajuster_sur_solde(p, jour, cible)
+        assert a.possible and abs(a.ecart) <= 0.05
+        assert solde_a_la_date(a.parametres, jour)[1] == pytest.approx(cible, abs=0.05)
+
+
+@pytest.mark.parametrize("taux", [0.0, 2.0, 4.17])
+@pytest.mark.parametrize("differe", [0, 3])
+@pytest.mark.parametrize("interets_imposes", [None, 0.0, 50.0, 1_000_000.0])
+def test_capital_rembourse_jamais_superieur_au_capital_de_base(taux, differe, interets_imposes):
+    p = pret_banque(468.45)
+    p = replace(p, taux=taux, nb_echeances_differe=differe, interets_capitalises_imposes=interets_imposes)
+    r = calculer(p)
+    e = r.echeancier
+    assert r.capital_amorti <= 24_000 + plafond_interets_capitalises(p) + 0.005
+    assert e["Amortissement (€)"].sum() == pytest.approx(24_000, abs=0.01)  # capital net remboursé = capital emprunté
+    assert (e["Amortissement (€)"].iloc[differe:] >= 0).all()
+    assert e["Solde (€)"].iloc[-1] == pytest.approx(0)
 
 
 def test_export_respecte_le_fichier_type(tmp_path):

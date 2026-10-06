@@ -70,8 +70,12 @@ Règles déduites du grand livre d'un prêt Crédit Agricole à déblocages succ
 - **Pour coller au tableau de la banque** :
   - *Échéance de l'offre de prêt* : fixe l'échéance constante ;
   - *Ajustement sur un capital restant dû connu* : l'application recherche au centime les intérêts
-    capitalisés (ou l'échéance) qui redonnent ce solde. À défaut, le capital est déduit de
-    l'échéance et calé sur le grand livre importé.
+    capitalisés pendant le différé (jamais pour un prêt à taux nul, et dans une limite vraisemblable),
+    puis l'échéance, qui redonnent ce solde. Si le solde saisi est hors d'atteinte, l'ajustement est
+    refusé (avec la fourchette possible) et l'échéancier n'est pas modifié.
+- **Garde-fous** : le capital remboursé ne dépasse jamais le capital de base (seuls s'y ajoutent les
+  intérêts capitalisés d'un différé) ; sans différé, l'échéance saisie ne modifie jamais le capital ;
+  aucune échéance ne rembourse un capital négatif (avertissement si l'échéance ne couvre pas les intérêts).
   - Exemple du prêt n°141 : échéance 468,45 €, capital restant dû de 21 859,20 € au 08/09/2026 →
     185,76 € d'intérêts capitalisés, tableau bancaire reproduit au centime.
 - Le **solde** est toujours le capital réellement versé à chaque date : un déblocage postérieur augmente

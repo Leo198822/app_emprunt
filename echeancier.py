@@ -175,6 +175,14 @@ def interets_differe(p: ParametresPret, dates: list[date]) -> list[float]:
     return interets
 
 
+def plafond_interets_capitalises(p: ParametresPret) -> float:
+    """Maximum vraisemblable des intérêts ajoutés au capital pendant le différé : tout le capital versé au taux
+    du prêt pendant le différé et une période de plus. 0 sans différé capitalisé ou pour un prêt à taux nul."""
+    if not (p.nb_echeances_differe and p.interets_differe_capitalises) or p.taux <= 0:
+        return 0.0
+    return round(p.capital_effectif * p.taux_periodique * (p.nb_echeances_differe + 1), 2)
+
+
 def repartir_ecart(montants: list[float], total: float) -> list[float]:
     """Ajuste des montants au prorata pour atteindre un total ; la dernière ligne absorbe l'arrondi."""
     somme = sum(montants)
@@ -207,7 +215,7 @@ def tableau_constant(base: float, echeance: float, facteurs: list[float]) -> lis
             if abs(round(echeance - a, 2) - interet) <= 0.02:
                 interet = round(echeance - a, 2)
         else:
-            a = min(round(echeance - interet, 2), restant)
+            a = min(max(round(echeance - interet, 2), 0.0), restant)
         lignes.append((interet, round(a, 2)))
         restant = round(restant - a, 2)
     return lignes
@@ -247,12 +255,12 @@ def tableau_proratise(
         elif reste_a_verser > 0.005 or non_verse(p, debut) > 0.005:
             # Période touchée par des fonds non encore versés : échéance et intérêts au prorata.
             interet = interet_reel(p, restant, debut, fin, facteur)
-            a = round(round(echeance * (base - reste_a_verser) / base, 2) - interet, 2)
+            a = min(max(round(round(echeance * (base - reste_a_verser) / base, 2) - interet, 2), 0.0), restant)
         else:
             if echeance_finale is None:
                 echeance_finale = echeance_pour(restant, p.taux_periodique, n - k)
             interet = round(restant * facteur, 2)
-            a = min(round(echeance_finale - interet, 2), restant)
+            a = min(max(round(echeance_finale - interet, 2), 0.0), restant)
         lignes.append((interet, round(a, 2)))
         restant = round(restant - a, 2)
         debut = fin
@@ -291,9 +299,11 @@ def calculer(p: ParametresPret) -> Resultat:
     facteurs = facteurs_interets(p, dates)
     calcules = round(sum(interets), 2) if p.interets_differe_capitalises else 0.0
 
-    capitalises = calcules
+    # Le capital à rembourser ne peut dépasser le capital versé que des intérêts réellement capitalisés.
+    plafond = plafond_interets_capitalises(p)
+    capitalises = min(calcules, plafond)
     if p.interets_differe_capitalises and p.interets_capitalises_imposes is not None:
-        capitalises = round(p.interets_capitalises_imposes, 2)
+        capitalises = min(max(round(p.interets_capitalises_imposes, 2), 0.0), plafond)
     base = round(p.capital_effectif + capitalises, 2)
 
     echeance = None
@@ -315,11 +325,12 @@ def calculer(p: ParametresPret) -> Resultat:
             if p.echeance_assurance_comprise:
                 # Échéance saisie assurance comprise : on retire l'assurance de la 1re échéance d'amortissement.
                 echeance = round(echeance - p.assurance_sur(base), 2)
-            if p.interets_differe_capitalises and p.interets_capitalises_imposes is None:
-                # L'échéance de la banque fixe le capital amorti, donc les intérêts capitalisés.
-                if not p.partiel:
-                    base = calibrer_base(echeance, t, facteurs, p.remboursements_constates)
-                    capitalises = round(base - p.capital_effectif, 2)
+            if plafond and p.interets_capitalises_imposes is None and not p.partiel:
+                # Différé capitalisé : l'échéance de la banque fixe le capital amorti, donc les intérêts
+                # capitalisés — retenus seulement s'ils restent vraisemblables (entre 0 et le plafond).
+                calibre = calibrer_base(echeance, t, facteurs, p.remboursements_constates)
+                if p.capital_effectif <= calibre <= p.capital_effectif + plafond:
+                    base, capitalises = calibre, round(calibre - p.capital_effectif, 2)
         elif p.partiel and p.partiel_duree_reduite:
             # Échéance du prêt complet appliquée au montant débloqué : le remboursement s'arrête plus tôt.
             echeance = echeance_pour(round(p.capital + capitalises, 2), t, n)
@@ -365,10 +376,18 @@ def calculer_echeancier(p: ParametresPret) -> pd.DataFrame:
 
 @dataclass
 class Ajustement:
-    parametres: ParametresPret  # paramètres recalculés
+    parametres: ParametresPret  # paramètres recalculés (inchangés si l'ajustement est impossible)
     date_echeance: date  # échéance retenue (dernière à la date saisie ou avant)
     solde_obtenu: float
     levier: str  # « intérêts capitalisés » ou « échéance »
+    possible: bool = True  # False : solde inatteignable, l'échéancier n'est pas modifié
+    fourchette: tuple[float, float] | None = None  # soldes atteignables à cette date
+
+    @property
+    def exact(self) -> bool:
+        return self.possible and abs(self.ecart) <= 0.01
+
+    ecart: float = 0.0
 
 
 def solde_a_la_date(p: ParametresPret, jour: date) -> tuple[date, float] | None:
@@ -380,39 +399,56 @@ def solde_a_la_date(p: ParametresPret, jour: date) -> tuple[date, float] | None:
     return passees["Date"].iloc[-1], float(passees["Solde (€)"].iloc[-1])
 
 
-def ajuster_sur_solde(p: ParametresPret, jour: date, solde_cible: float) -> Ajustement | None:
+def ajuster_sur_solde(p: ParametresPret, jour: date, solde_cible: float, tolerance: float = 0.5) -> Ajustement | None:
     """Recalcule l'échéancier pour que le capital restant dû à une date corresponde à celui de la banque.
 
-    Avec un différé capitalisé, on ajuste le montant des intérêts capitalisés (donc le capital à
-    amortir) ; sinon on ajuste l'échéance constante. Recherche par dichotomie au centime.
+    Leviers, dans l'ordre : les intérêts capitalisés pendant le différé (entre 0 et un plafond vraisemblable,
+    jamais pour un prêt à taux nul), puis l'échéance constante. Chaque levier n'est essayé que si le solde
+    visé est dans la fourchette qu'il peut atteindre ; recherche par dichotomie au centime. Si aucun levier
+    n'atteint le solde à `tolerance` près, l'ajustement est déclaré impossible et rien n'est modifié.
     """
     if dates_echeances(p)[0] > jour:
         return None
-    if p.nb_echeances_differe and p.interets_differe_capitalises:
-        levier, croissant = "intérêts capitalisés", True
-        variante = lambda cts: replace(p, interets_capitalises_imposes=cts / 100)  # noqa: E731
-        bas, haut = 0, round(p.capital_effectif * 100)
-    elif p.type_remboursement == "Échéances constantes":
-        levier, croissant = "échéance", False  # une échéance plus forte réduit le capital restant dû
-        variante = lambda cts: replace(p, echeance_imposee=cts / 100)  # noqa: E731
-        bas, haut = 1, round(p.capital * 100)
-    else:
-        return None
+    base = calculer(p).capital_amorti
+    leviers = []
+    if plafond_interets_capitalises(p) > 0:
+        leviers.append((
+            "intérêts capitalisés", True, 0, round(plafond_interets_capitalises(p) * 100),
+            lambda cts: replace(p, interets_capitalises_imposes=cts / 100),
+        ))
+    if p.type_remboursement == "Échéances constantes":
+        # Une échéance plus forte réduit le capital restant dû ; au maximum, tout est remboursé d'un coup.
+        haut = round((base + p.assurance_sur(base) + p.montant_total_autres_frais) * 100) + 1
+        leviers.append(("échéance", False, 1, haut, lambda cts: replace(p, echeance_imposee=cts / 100)))
 
-    def ecart(cts: int) -> float:
-        return solde_a_la_date(variante(cts), jour)[1] - solde_cible
+    meilleur, extremes = None, []
+    for nom, croissant, bas, haut, variante in leviers:
+        solde = lambda cts: solde_a_la_date(variante(cts), jour)[1]  # noqa: E731
+        s_bas, s_haut = solde(bas), solde(haut)
+        extremes += [s_bas, s_haut]
+        if not min(s_bas, s_haut) - tolerance <= solde_cible <= max(s_bas, s_haut) + tolerance:
+            continue  # solde hors d'atteinte avec ce levier
+        while bas < haut:
+            milieu = (bas + haut) // 2
+            if (solde(milieu) >= solde_cible) == croissant:
+                haut = milieu
+            else:
+                bas = milieu + 1
+        candidats = [c for c in (bas - 1, bas, bas + 1) if c >= 0]
+        cts = min(candidats, key=lambda c: abs(solde(c) - solde_cible))
+        ecart = round(solde(cts) - solde_cible, 2)
+        if meilleur is None or abs(ecart) < abs(meilleur[1]):
+            meilleur = (nom, ecart, variante(cts))
+        if abs(ecart) <= 0.01:
+            break
 
-    # Plus petite valeur (en centimes) dont le solde dépasse (ou, en décroissant, passe sous) la cible.
-    while bas < haut:
-        milieu = (bas + haut) // 2
-        if (ecart(milieu) >= 0) == croissant:
-            haut = milieu
-        else:
-            bas = milieu + 1
-    meilleur = min((c for c in (bas - 1, bas, bas + 1) if c > 0), key=lambda c: abs(ecart(c)))
-    parametres = variante(meilleur)
+    fourchette = (round(min(extremes), 2), round(max(extremes), 2)) if extremes else None
+    if meilleur is None or abs(meilleur[1]) > tolerance:
+        date_echeance, solde_actuel = solde_a_la_date(p, jour)
+        return Ajustement(p, date_echeance, solde_actuel, "", possible=False, fourchette=fourchette)
+    nom, ecart, parametres = meilleur
     date_echeance, solde = solde_a_la_date(parametres, jour)
-    return Ajustement(parametres, date_echeance, solde, levier)
+    return Ajustement(parametres, date_echeance, solde, nom, fourchette=fourchette, ecart=ecart)
 
 
 def exporter_pennylane(p: ParametresPret, echeancier: pd.DataFrame) -> bytes:
