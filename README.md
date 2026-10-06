@@ -5,7 +5,7 @@ plusieurs fois et génère le fichier d'import **Pennylane** (même structure qu
 
 ## Utilisation
 
-L'écran se remplit en deux étapes ; l'échéancier se génère dès que les informations obligatoires sont saisies.
+L'écran se remplit en quelques étapes ; l'échéancier se génère dès que les informations obligatoires sont saisies.
 
 1. **Le prêt** (offre de prêt) : montant emprunté, taux, date de la 1re échéance, **périodicité**
    (mensuelle, trimestrielle, semestrielle, annuelle), type de remboursement, nombre total
@@ -31,7 +31,12 @@ L'écran se remplit en deux étapes ; l'échéancier se génère dès que les in
    tableau modifiable : double-clic pour corriger, cocher une ou plusieurs lignes puis bouton « 🗑️ Supprimer », ligne vide pour
    en ajouter, bouton « Annuler » pour revenir au grand livre), saisie manuelle, ou fonds versés en une fois
    (en déblocage partiel, saisir alors le montant débloqué). Le total des déblocages est affiché.
-3. **Ajustement (facultatif)** : sous l'échéancier, saisir une date et le capital restant dû connu à
+3. **Remboursements anticipés (facultatif)** : case « Le prêt a fait l'objet d'un remboursement anticipé ».
+   Pour chacun : date, capital remboursé (ou case « Total »), indemnités (IRA). Le remboursement est intégré
+   à l'échéance qui suit sa date (Amortissement ; indemnités en Autres frais). Après un remboursement
+   partiel : échéance maintenue (durée réduite) ou durée maintenue (échéance recalculée). Une fois le
+   capital soldé par anticipation, l'échéancier s'arrête.
+4. **Ajustement (facultatif)** : sous l'échéancier, saisir une date et le capital restant dû connu à
    cette date (tableau de la banque, relevé…). L'échéancier est recalculé pour retomber exactement
    dessus : l'application ajuste les intérêts ajoutés au capital pendant le différé ou, sans différé,
    l'échéance.

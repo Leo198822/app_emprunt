@@ -41,6 +41,14 @@ class Deblocage:
 
 
 @dataclass
+class RemboursementAnticipe:
+    date: date
+    montant: float = 0.0  # capital remboursé par anticipation (ignoré si total)
+    total: bool = False  # True : tout le capital restant dû est remboursé, le prêt est clos
+    indemnites: float = 0.0  # indemnités de remboursement anticipé (IRA), en autres frais
+
+
+@dataclass
 class ParametresPret:
     capital: float  # montant emprunté (offre de prêt)
     taux: float  # taux nominal annuel en %
@@ -61,6 +69,9 @@ class ParametresPret:
     assurance_taux_crd: float = 0.0  # ou taux annuel (%) appliqué au capital restant dû en début de période
     autres_frais: float = 0.0
     autres_frais_en_pourcentage: bool = False  # True : % du capital ; False : montant total
+    remboursements_anticipes: list[RemboursementAnticipe] = field(default_factory=list)
+    anticipe_reduit_duree: bool = True  # après un remboursement partiel : True = durée réduite (échéance
+    # maintenue) ; False = échéance recalculée sur la durée restante
     montant_debloque: float | None = None  # déblocage partiel : montant réellement versé (None = en totalité)
     partiel_duree_reduite: bool = True  # partiel : True = échéance du prêt complet, durée raccourcie ;
     # False = durée maintenue, échéance recalculée sur le montant débloqué
@@ -122,6 +133,7 @@ class Resultat:
     interets_capitalises_retenus: float
     echeance_constante: float | None
     rang_capital_solde: int  # rang de l'échéance qui solde le capital (= nombre d'échéances sans fin anticipée)
+    anticipes: list[tuple[date, float, float]] = field(default_factory=list)  # (échéance, capital, indemnités)
 
 
 def ajouter_mois(d: date, mois: int, jour: int | None = None) -> date:
@@ -201,12 +213,42 @@ def facteurs_interets(p: ParametresPret, dates: list[date]) -> list[float]:
     return [r * (fin - debut).days / BASE_JOURS for debut, fin in zip(debuts, dates[k0:])]
 
 
-def tableau_constant(base: float, echeance: float, facteurs: list[float]) -> list[tuple[float, float]]:
+@dataclass
+class Anticipes:
+    """Remboursements anticipés rattachés aux échéances d'amortissement (indice → remboursements)."""
+
+    par_echeance: dict[int, list[RemboursementAnticipe]] = field(default_factory=dict)
+    reduire_duree: bool = True
+    t: float = 0.0  # taux périodique, pour recalculer l'échéance
+    appliques: dict[int, float] = field(default_factory=dict)  # capital effectivement remboursé par anticipation
+
+    def appliquer(self, k: int, a: float, restant: float) -> float:
+        """Capital remboursé par anticipation à l'échéance k, en plus de l'amortissement normal `a`."""
+        supplement = 0.0
+        for ra in self.par_echeance.get(k, []):
+            reste = round(restant - a - supplement, 2)
+            supplement += reste if ra.total else min(max(round(ra.montant, 2), 0.0), reste)
+        if supplement:
+            self.appliques[k] = round(supplement, 2)
+        return round(supplement, 2)
+
+    def nouvelle_echeance(self, k: int, restant_apres: float, n: int) -> float | None:
+        """Échéance recalculée sur la durée restante (option « échéance réduite »), sinon None."""
+        if k in self.appliques and not self.reduire_duree and restant_apres > 0.005 and k < n - 1:
+            return echeance_pour(restant_apres, self.t, n - k - 1)
+        return None
+
+
+def tableau_constant(
+    base: float, echeance: float, facteurs: list[float], anticipes: Anticipes | None = None
+) -> list[tuple[float, float]]:
     """(intérêt, amortissement) de chaque échéance, arrondis au centime ligne à ligne.
 
     La dernière échéance solde le capital et reste égale aux autres quand l'écart n'est qu'un arrondi
-    (convention Pennylane et bancaire).
+    (convention Pennylane et bancaire). Les remboursements anticipés s'ajoutent à l'amortissement de
+    l'échéance concernée ; ensuite, l'échéance est maintenue (durée réduite) ou recalculée.
     """
+    anticipes = anticipes or Anticipes()
     lignes, restant, n = [], base, len(facteurs)
     for k, facteur in enumerate(facteurs):
         interet = round(restant * facteur, 2)
@@ -216,8 +258,10 @@ def tableau_constant(base: float, echeance: float, facteurs: list[float]) -> lis
                 interet = round(echeance - a, 2)
         else:
             a = min(max(round(echeance - interet, 2), 0.0), restant)
-        lignes.append((interet, round(a, 2)))
+        a = round(a + anticipes.appliquer(k, a, restant), 2)
+        lignes.append((interet, a))
         restant = round(restant - a, 2)
+        echeance = anticipes.nouvelle_echeance(k, restant, n) or echeance
     return lignes
 
 
@@ -237,7 +281,8 @@ def interet_reel(p: ParametresPret, crd_theorique: float, debut: date, fin: date
 
 
 def tableau_proratise(
-    p: ParametresPret, dates: list[date], base: float, echeance: float, facteurs: list[float]
+    p: ParametresPret, dates: list[date], base: float, echeance: float, facteurs: list[float],
+    anticipes: Anticipes | None = None,
 ) -> list[tuple[float, float]]:
     """(intérêt, amortissement) quand des fonds sont versés après le début de l'amortissement.
 
@@ -246,6 +291,7 @@ def tableau_proratise(
     Après le dernier déblocage, l'échéance est recalculée sur le capital restant dû pour finir au terme.
     """
     k0, n = p.nb_echeances_differe, len(facteurs)
+    anticipes = anticipes or Anticipes()
     debut = dates[k0 - 1] if k0 else ajouter_mois(dates[0], -p.mois_par_periode, p.jour_prelevement)
     lignes, restant, echeance_finale = [], base, None
     for k, (fin, facteur) in enumerate(zip(dates[k0 : k0 + n], facteurs)):
@@ -261,8 +307,12 @@ def tableau_proratise(
                 echeance_finale = echeance_pour(restant, p.taux_periodique, n - k)
             interet = round(restant * facteur, 2)
             a = min(max(round(echeance_finale - interet, 2), 0.0), restant)
-        lignes.append((interet, round(a, 2)))
+        a = round(a + anticipes.appliquer(k, a, restant), 2)
+        lignes.append((interet, a))
         restant = round(restant - a, 2)
+        if k in anticipes.appliques and echeance_finale is not None and restant > 0.005:
+            # Après un remboursement anticipé : échéance maintenue (durée réduite) ou recalculée.
+            echeance_finale = anticipes.nouvelle_echeance(k, restant, n) or echeance_finale
         debut = fin
     return lignes
 
@@ -306,6 +356,14 @@ def calculer(p: ParametresPret) -> Resultat:
         capitalises = min(max(round(p.interets_capitalises_imposes, 2), 0.0), plafond)
     base = round(p.capital_effectif + capitalises, 2)
 
+    k0 = p.nb_echeances_differe
+    anticipes = Anticipes(reduire_duree=p.anticipe_reduit_duree, t=t)
+    for ra in sorted(p.remboursements_anticipes, key=lambda r: r.date):
+        # Rattaché à la 1re échéance d'amortissement à sa date ou après.
+        k = next((j for j, d in enumerate(dates[k0:]) if d >= ra.date), None)
+        if k is not None:
+            anticipes.par_echeance.setdefault(k, []).append(ra)
+
     echeance = None
     proratise = (
         p.echeance_proratisee
@@ -314,11 +372,15 @@ def calculer(p: ParametresPret) -> Resultat:
         and max(d.date for d in p.deblocages) > dates[p.nb_echeances_differe]
     )
     if p.type_remboursement == "Amortissement constant":
-        amortissements = repartir(base, n)
+        part = round(base / n, 2)
         lignes_amort, restant = [], base
-        for a, facteur in zip(amortissements, facteurs):
+        for k, facteur in enumerate(facteurs):
+            a = restant if k == n - 1 else min(part, restant)
+            a = round(a + anticipes.appliquer(k, a, restant), 2)
             lignes_amort.append((round(restant * facteur, 2), a))
             restant = round(restant - a, 2)
+            if k in anticipes.appliques and not anticipes.reduire_duree and k < n - 1:
+                part = round(restant / (n - k - 1), 2)  # amortissement réparti sur la durée restante
     else:
         if p.echeance_imposee:
             echeance = round(p.echeance_imposee, 2)
@@ -337,9 +399,9 @@ def calculer(p: ParametresPret) -> Resultat:
         else:
             echeance = echeance_pour(base, t, n)
         if proratise:
-            lignes_amort = tableau_proratise(p, dates, base, echeance, facteurs)
+            lignes_amort = tableau_proratise(p, dates, base, echeance, facteurs, anticipes)
         else:
-            lignes_amort = tableau_constant(base, echeance, facteurs)
+            lignes_amort = tableau_constant(base, echeance, facteurs, anticipes)
 
     if p.interets_differe_capitalises and interets and capitalises != calcules:
         # Total imposé par la banque : l'écart est réparti au prorata des intérêts de chaque mois.
@@ -348,6 +410,8 @@ def calculer(p: ParametresPret) -> Resultat:
     # Capital soldé avant la fin (déblocage partiel, échéance maintenue) : les échéances suivantes
     # restent dans l'échéancier, à 0 hors assurance et frais, jusqu'au terme prévu du prêt.
     frais = repartir(p.montant_total_autres_frais, p.nb_echeances)
+    for k, ras in anticipes.par_echeance.items():  # indemnités de remboursement anticipé
+        frais[k0 + k] = round(frais[k0 + k] + sum(ra.indemnites for ra in ras), 2)
     # Le tableau porte sur la totalité du prêt (échéance constante, comme la banque) ; le solde affiché est
     # le capital réellement versé à chaque date (les fonds non encore débloqués n'en font pas partie).
     lignes, solde = [], p.capital_effectif
@@ -365,9 +429,17 @@ def calculer(p: ParametresPret) -> Resultat:
         solde_reel = round(solde - non_verse(p, d), 2)
         lignes.append([d, interet, assurance, frais[k], amort, round(paye + assurance + frais[k], 2), solde_reel])
         debut = d
-    echeancier = pd.DataFrame(lignes, columns=COLONNES)
     soldees = [k + 1 for k in range(p.nb_echeances_differe, len(lignes)) if lignes[k][6] <= 0.005]
-    return Resultat(echeancier, base, calcules, capitalises, echeance, soldees[0] if soldees else len(lignes))
+    if anticipes.appliques and soldees:
+        lignes = lignes[: soldees[0]]  # prêt soldé par anticipation : plus d'échéance ensuite
+    echeancier = pd.DataFrame(lignes, columns=COLONNES)
+    appliques = [
+        (dates[k0 + k], montant, round(sum(ra.indemnites for ra in anticipes.par_echeance[k]), 2))
+        for k, montant in sorted(anticipes.appliques.items())
+    ]
+    return Resultat(
+        echeancier, base, calcules, capitalises, echeance, soldees[0] if soldees else len(lignes), appliques
+    )
 
 
 def calculer_echeancier(p: ParametresPret) -> pd.DataFrame:
@@ -465,7 +537,7 @@ def exporter_pennylane(p: ParametresPret, echeancier: pd.DataFrame) -> bytes:
         p.taux_assurance,
         round(float(echeancier["Assurance (€)"].sum()), 2),
         p.pourcentage_autres_frais,
-        p.montant_total_autres_frais,
+        round(float(echeancier["Autres frais (€)"].sum()), 2),  # frais répartis + indemnités éventuelles
         len(echeancier),
     ]
     for c, valeur in enumerate(entete, start=1):

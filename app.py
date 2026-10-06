@@ -7,6 +7,7 @@ from echeancier import (
     PERIODICITES,
     Deblocage,
     ParametresPret,
+    RemboursementAnticipe,
     ajouter_mois,
     ajuster_sur_solde,
     calculer,
@@ -36,9 +37,11 @@ def remettre_a_zero() -> None:
     st.session_state["reinitialisations"] = st.session_state.get("reinitialisations", 0) + 1
 
 
-def editer_deblocages(initial: pd.DataFrame, cle_tableau: str, annulable: bool = False) -> list[Deblocage]:
-    """Tableau modifiable des déblocages : correction des cellules, ajout de lignes, et suppression des lignes
-    cochées (colonne « Sélection ») par le bouton 🗑️. Les corrections et ajouts déjà faits sont conservés."""
+def editer_lignes(
+    initial: pd.DataFrame, cle_tableau: str, colonnes: dict, requises: list[str], consigne_annuler: str = ""
+) -> pd.DataFrame:
+    """Tableau modifiable : correction des cellules, ajout de lignes, et suppression des lignes cochées
+    (colonne « Sélection ») par le bouton 🗑️. Les corrections et ajouts déjà faits sont conservés."""
     donnees, version = f"{cle_tableau}_donnees", f"{cle_tableau}_version"
     if donnees not in st.session_state:
         st.session_state[donnees], st.session_state[version] = initial.reset_index(drop=True), 0
@@ -50,11 +53,10 @@ def editer_deblocages(initial: pd.DataFrame, cle_tableau: str, annulable: bool =
         num_rows="dynamic",
         width="stretch",
         hide_index=True,
-        column_order=["Sélection", "Date", "Montant (€)"],
+        column_order=["Sélection", *colonnes],
         column_config={
             "Sélection": st.column_config.CheckboxColumn("☑", default=False, width="small", help="Sélectionner la ligne"),
-            "Date": st.column_config.DateColumn("Date du déblocage", format="DD/MM/YYYY", required=True),
-            "Montant (€)": st.column_config.NumberColumn("Montant (€)", min_value=0.0, format="%.2f", required=True),
+            **colonnes,
         },
     )
     selection = saisie["Sélection"].fillna(False).astype(bool)
@@ -62,10 +64,10 @@ def editer_deblocages(initial: pd.DataFrame, cle_tableau: str, annulable: bool =
     with barre:
         consignes, bouton = st.columns([3, 1], vertical_alignment="bottom")
         consignes.caption(
-            "✏️ **Corriger** : double-cliquez sur une date ou un montant.  \n"
+            "✏️ **Corriger** : double-cliquez sur une cellule.  \n"
             "🗑️ **Supprimer** : cochez la ou les lignes (colonne ☑), puis cliquez sur « 🗑️ Supprimer ».  \n"
             "➕ **Ajouter** : remplissez la ligne vide en bas du tableau."
-            + ("  \n↺ **Annuler** revient aux déblocages du grand livre." if annulable else "")
+            + (f"  \n↺ **Annuler** {consigne_annuler}" if consigne_annuler else "")
         )
         if bouton.button(
             f"🗑️ Supprimer ({nb})" if nb else "🗑️ Supprimer",
@@ -77,8 +79,21 @@ def editer_deblocages(initial: pd.DataFrame, cle_tableau: str, annulable: bool =
             st.session_state[donnees] = saisie[~selection].drop(columns="Sélection").reset_index(drop=True)
             st.session_state[version] += 1
             st.rerun()
+    return saisie.drop(columns="Sélection").dropna(subset=requises)
 
-    saisie = saisie.dropna(subset=["Date", "Montant (€)"])
+
+def editer_deblocages(initial: pd.DataFrame, cle_tableau: str, annulable: bool = False) -> list[Deblocage]:
+    """Tableau modifiable des déblocages (dates et montants)."""
+    saisie = editer_lignes(
+        initial,
+        cle_tableau,
+        {
+            "Date": st.column_config.DateColumn("Date du déblocage", format="DD/MM/YYYY", required=True),
+            "Montant (€)": st.column_config.NumberColumn("Montant (€)", min_value=0.0, format="%.2f", required=True),
+        },
+        ["Date", "Montant (€)"],
+        "revient aux déblocages du grand livre." if annulable else "",
+    )
     return sorted(
         (Deblocage(pd.Timestamp(r["Date"]).date(), round(float(r["Montant (€)"]), 2)) for _, r in saisie.iterrows()),
         key=lambda d: d.date,
@@ -327,6 +342,72 @@ if len(deblocages) > 1 and premier_paiement and nb_echeances and type_remboursem
             label_visibility="collapsed",
         ).startswith("proratisées")
 
+# --- Remboursements anticipés -----------------------------------------------------------
+anticipes, anticipe_reduit_duree, erreurs_anticipes = [], True, []
+if st.checkbox("Le prêt a fait l'objet d'un **remboursement anticipé**", key=cle("avec_anticipe")):
+    st.header("3. Remboursements anticipés", divider="gray")
+    saisie_ra = editer_lignes(
+        pd.DataFrame({
+            "Date": pd.Series(dtype="datetime64[ns]"),
+            "Montant (€)": pd.Series(dtype="float"),
+            "Total": pd.Series(dtype="bool"),
+            "Indemnités (€)": pd.Series(dtype="float"),
+        }),
+        cle("anticipes"),
+        {
+            "Date": st.column_config.DateColumn("Date du remboursement", format="DD/MM/YYYY", required=True),
+            "Montant (€)": st.column_config.NumberColumn(
+                "Capital remboursé (€)", min_value=0.0, format="%.2f", help="Laisser vide si le remboursement est total."
+            ),
+            "Total": st.column_config.CheckboxColumn(
+                "Total", default=False, help="Cochez si tout le capital restant dû est remboursé (prêt soldé)."
+            ),
+            "Indemnités (€)": st.column_config.NumberColumn(
+                "Indemnités (€)", min_value=0.0, format="%.2f", help="Indemnités de remboursement anticipé (IRA), facultatif."
+            ),
+        },
+        ["Date"],
+    )
+    for _, r in saisie_ra.iterrows():
+        total_ra = bool(r["Total"]) if pd.notna(r["Total"]) else False
+        montant_ra = float(r["Montant (€)"]) if pd.notna(r["Montant (€)"]) else 0.0
+        if not total_ra and montant_ra <= 0:
+            continue  # ligne incomplète
+        anticipes.append(RemboursementAnticipe(
+            pd.Timestamp(r["Date"]).date(), round(montant_ra, 2), total_ra,
+            round(float(r["Indemnités (€)"]), 2) if pd.notna(r["Indemnités (€)"]) else 0.0,
+        ))
+    st.caption(
+        "Le remboursement est intégré à l'échéance qui suit sa date (capital remboursé dans la colonne Amortissement, "
+        "indemnités dans Autres frais). Après un remboursement total, l'échéancier s'arrête."
+    )
+    if any(not ra.total for ra in anticipes):
+        anticipe_reduit_duree = st.radio(
+            "Après un remboursement partiel…",
+            [
+                "l'échéance est maintenue : la durée est réduite",
+                "la durée est maintenue : l'échéance est recalculée",
+            ],
+            key=cle("anticipe_reduit_duree"),
+        ).startswith("l'échéance est maintenue")
+    if anticipes and premier_paiement and nb_echeances:
+        mois = PERIODICITES[periodicite]
+        derniere = ajouter_mois(premier_paiement, (int(nb_echeances) - 1) * mois, premier_paiement.day)
+        premiere_amortissement = ajouter_mois(premier_paiement, int(nb_differe) * mois, premier_paiement.day)
+        for ra in anticipes:
+            if ra.date > derniere:
+                erreurs_anticipes.append(
+                    f"le remboursement du {ra.date.strftime('%d/%m/%Y')} est postérieur à la dernière échéance "
+                    f"({derniere.strftime('%d/%m/%Y')})"
+                )
+            elif ra.date <= premier_paiement or (nb_differe and ra.date < premiere_amortissement):
+                erreurs_anticipes.append(
+                    f"le remboursement du {ra.date.strftime('%d/%m/%Y')} précède la 1re échéance de remboursement "
+                    f"du capital ({premiere_amortissement.strftime('%d/%m/%Y')})"
+                )
+        for erreur in erreurs_anticipes:
+            st.error(f"⛔ Remboursement anticipé : {erreur}.")
+
 # --- Résultat ----------------------------------------------------------------------------
 st.header("Échéancier", divider="gray")
 manquants = [
@@ -349,6 +430,9 @@ if source.startswith("Importer") and not deblocages:
     )
 if manquants:
     st.info("Pour générer l'échéancier, renseignez : " + ", ".join(manquants) + ".")
+    st.stop()
+if erreurs_anticipes:
+    st.error("⛔ Échéancier non généré : corrigez les remboursements anticipés (voir ci-dessus).")
     st.stop()
 if depassement or deblocage_tardif:
     motif = "les déblocages dépassent le montant emprunté" if depassement else "le 1er déblocage est postérieur à la 1re échéance"
@@ -377,6 +461,8 @@ params = ParametresPret(
     montant_debloque=montant_debloque,
     partiel_duree_reduite=duree_reduite,
     echeance_proratisee=echeance_proratisee,
+    remboursements_anticipes=anticipes,
+    anticipe_reduit_duree=anticipe_reduit_duree,
 )
 with st.expander("🎯 Ajuster sur un capital restant dû connu (facultatif)"):
     st.caption(
@@ -438,6 +524,18 @@ m3.metric(
     + (f" ; s'y ajoutent {euros(capitalises_rembourses)} d'intérêts capitalisés pendant le différé." if capitalises_rembourses > 0 else "."),
 )
 m4.metric("Total des intérêts", euros(echeancier["Intérêt (€)"].sum()))
+for jour_ra, montant_ra, indemnites_ra in resultat.anticipes:
+    st.info(
+        f"💶 Remboursement anticipé de {euros(montant_ra)} intégré à l'échéance du {jour_ra.strftime('%d/%m/%Y')}"
+        + (f", avec {euros(indemnites_ra)} d'indemnités (colonne Autres frais)" if indemnites_ra else "")
+        + "."
+    )
+if resultat.anticipes and len(echeancier) < params.nb_echeances:
+    st.info(
+        f"Prêt soldé le {echeancier['Date'].iloc[-1].strftime('%d/%m/%Y')} : {len(echeancier)} échéances au lieu de "
+        f"{params.nb_echeances}."
+    )
+
 rang = resultat.rang_capital_solde
 if rang < len(echeancier):
     reste = len(echeancier) - rang

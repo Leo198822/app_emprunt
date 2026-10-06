@@ -6,6 +6,7 @@ import openpyxl
 import pytest
 
 from echeancier import (
+    RemboursementAnticipe,
     plafond_interets_capitalises,
     solde_a_la_date,
     diagnostic_controle,
@@ -406,6 +407,68 @@ def test_capital_rembourse_jamais_superieur_au_capital_de_base(taux, differe, in
     assert r.capital_amorti <= 24_000 + plafond_interets_capitalises(p) + 0.005
     assert e["Amortissement (€)"].sum() == pytest.approx(24_000, abs=0.01)  # capital net remboursé = capital emprunté
     assert (e["Amortissement (€)"].iloc[differe:] >= 0).all()
+    assert e["Solde (€)"].iloc[-1] == pytest.approx(0)
+
+
+def pret_10000(**options):
+    valeurs = dict(capital=10_000, taux=4.0, nb_echeances=24, date_premier_paiement=date(2026, 1, 10), jour_prelevement=10)
+    return ParametresPret(**{**valeurs, **options})
+
+
+def test_remboursement_anticipe_partiel_duree_reduite():
+    r = calculer(pret_10000(remboursements_anticipes=[RemboursementAnticipe(date(2026, 4, 1), 3_000)]))
+    e = r.echeancier
+    assert r.anticipes == [(date(2026, 4, 10), 3_000.0, 0.0)]  # rattaché à l'échéance suivante
+    assert e["Amortissement (€)"].iloc[3] == pytest.approx(404.94 + 3_000)
+    assert set(e["Échéance (€)"].iloc[4:-1]) == {434.25}  # échéance maintenue…
+    assert len(e) == 17  # … donc durée réduite, et plus d'échéance après le solde
+    assert e["Amortissement (€)"].sum() == pytest.approx(10_000)
+    assert e["Solde (€)"].iloc[-1] == pytest.approx(0)
+
+
+def test_remboursement_anticipe_partiel_echeance_reduite():
+    e = calculer_echeancier(pret_10000(
+        remboursements_anticipes=[RemboursementAnticipe(date(2026, 4, 1), 3_000)], anticipe_reduit_duree=False
+    ))
+    assert len(e) == 24  # durée maintenue
+    assert e["Échéance (€)"].iloc[4] < 434.25 and len(set(e["Échéance (€)"].iloc[4:-1])) == 1
+    assert e["Amortissement (€)"].sum() == pytest.approx(10_000)
+    assert e["Solde (€)"].iloc[-1] == pytest.approx(0)
+
+
+def test_remboursement_anticipe_total_avec_indemnites(tmp_path):
+    p = pret_10000(remboursements_anticipes=[RemboursementAnticipe(date(2026, 9, 10), total=True, indemnites=150)])
+    e = calculer_echeancier(p)
+    assert len(e) == 9 and e["Date"].iloc[-1] == date(2026, 9, 10)
+    assert e["Solde (€)"].iloc[-1] == 0 and e["Autres frais (€)"].iloc[-1] == 150
+    assert e["Amortissement (€)"].sum() == pytest.approx(10_000)
+    fichier = tmp_path / "anticipe.xlsx"
+    fichier.write_bytes(exporter_pennylane(p, e))
+    ws = openpyxl.load_workbook(fichier).active
+    assert ws["F2"].value == 150 and ws["G2"].value == 9 and ws.max_row == 5 + 9
+
+
+def test_remboursement_anticipe_ne_rembourse_jamais_plus_que_le_capital():
+    for montant in (500, 9_000, 50_000):
+        for duree in (True, False):
+            e = calculer_echeancier(pret_10000(
+                remboursements_anticipes=[RemboursementAnticipe(date(2026, 6, 10), montant)], anticipe_reduit_duree=duree
+            ))
+            assert e["Amortissement (€)"].sum() == pytest.approx(10_000)
+            assert (e["Amortissement (€)"] >= 0).all() and (e["Solde (€)"] >= 0).all()
+
+
+def test_remboursement_anticipe_amortissement_constant_et_differe():
+    e = calculer_echeancier(pret_10000(
+        type_remboursement="Amortissement constant", remboursements_anticipes=[RemboursementAnticipe(date(2026, 3, 10), 2_000)]
+    ))
+    assert e["Amortissement (€)"].iloc[2] == pytest.approx(416.67 + 2_000) and len(e) < 24
+    assert e["Amortissement (€)"].sum() == pytest.approx(10_000)
+    p = pret_banque(468.45)
+    p.interets_capitalises_imposes = 185.76
+    p.remboursements_anticipes = [RemboursementAnticipe(date(2027, 1, 5), 5_000)]
+    e = calculer_echeancier(p)
+    assert e["Amortissement (€)"].iloc[12] == pytest.approx(396.60 + 5_000)  # rang 13 du tableau bancaire
     assert e["Solde (€)"].iloc[-1] == pytest.approx(0)
 
 
