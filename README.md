@@ -45,6 +45,8 @@ L'écran se remplit en quelques étapes ; l'échéancier se génère dès que le
    les échéances suivantes sont ajustées pour solder le prêt au terme (un intérêt modifié conserve
    l'échéance ; une échéance modifiée fixe le capital). Les lignes modifiées sont repérées par ✏️ ;
    « ↺ Annuler » revient à l'échéancier calculé. La dernière échéance solde toujours le capital.
+   Une alerte invite à vérifier l'échéancier avant de le télécharger ; le bouton de téléchargement
+   est placé sous le tableau.
 5. **Ajustement (facultatif)** : sous l'échéancier, saisir une date et le capital restant dû connu à
    cette date (tableau de la banque, relevé…). L'échéancier est recalculé pour retomber exactement
    dessus : l'application ajuste les intérêts ajoutés au capital pendant le différé ou, sans différé,

@@ -635,26 +635,25 @@ if controle_initial is not None:
         )
 
 st.subheader("Tableau d'échéancier (fichier Pennylane)")
-st.download_button(
-    "📥 Télécharger l'échéancier Pennylane (.xlsx)",
-    data=exporter_pennylane(params, echeancier),
-    file_name="Echeancier_pennylane.xlsx",
-    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    type="primary",
-    width="stretch",
-)
 COLONNES_MODIFIABLES = {
     "Intérêt (€)": "interet",
     "Assurance (€)": "assurance",
     "Autres frais (€)": "frais",
     "Amortissement (€)": "amortissement",
 }
-consignes, bouton_annuler = st.columns([3, 1], vertical_alignment="bottom")
+st.warning(
+    "🔎 **Vérifiez l'échéancier avant de le télécharger.** Comparez-le au tableau d'amortissement de la banque "
+    "(intérêts, capital, échéance, capital restant dû). En cas d'écart, **vous pouvez le modifier directement "
+    "dans le tableau ci-dessous** :  \n"
+    "✏️ double-cliquez sur un **intérêt**, une **assurance**, des **frais**, un **capital** ou une **échéance**, "
+    "saisissez le bon montant puis appuyez sur Entrée ;  \n"
+    "🔄 l'échéancier est recalculé aussitôt : les échéances suivantes sont ajustées pour solder le prêt au terme "
+    "(un intérêt modifié conserve l'échéance ; une échéance modifiée fixe le capital)."
+)
+consignes, bouton_annuler = st.columns([3, 1], vertical_alignment="center")
 consignes.caption(
-    "✏️ **Modifier** : double-cliquez sur un intérêt, une assurance, des frais, un capital (amortissement) ou une échéance, "
-    "saisissez le montant puis Entrée. L'échéancier est recalculé aussitôt : les échéances suivantes sont "
-    "ajustées pour solder le prêt au terme. Modifier un intérêt conserve l'échéance (le capital s'ajuste) ; "
-    "modifier une échéance en déduit le capital."
+    f"✏️ {len(corrections)} ligne(s) modifiée(s), repérée(s) dans la 1re colonne." if corrections
+    else "Colonnes modifiables : Intérêt, Assurance, Frais, Capital, Échéance (en-têtes marqués d'un crayon)."
 )
 if corrections:
     bouton_annuler.button(
@@ -726,3 +725,12 @@ if modifications:
         )
     st.session_state[cle_corrections + "_version"] = version_tableau + 1
     st.rerun()
+
+st.download_button(
+    "📥 Télécharger l'échéancier Pennylane (.xlsx)",
+    data=exporter_pennylane(params, echeancier),
+    file_name="Echeancier_pennylane.xlsx",
+    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    type="primary",
+    width="stretch",
+)
