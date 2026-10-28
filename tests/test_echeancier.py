@@ -6,6 +6,7 @@ import openpyxl
 import pytest
 
 from echeancier import (
+    capital_constate,
     RemboursementAnticipe,
     plafond_interets_capitalises,
     solde_a_la_date,
@@ -470,6 +471,43 @@ def test_remboursement_anticipe_amortissement_constant_et_differe():
     e = calculer_echeancier(p)
     assert e["Amortissement (€)"].iloc[12] == pytest.approx(396.60 + 5_000)  # rang 13 du tableau bancaire
     assert e["Solde (€)"].iloc[-1] == pytest.approx(0)
+
+
+def test_appliquer_les_montants_du_grand_livre():
+    p = pret_banque(468.45)
+    p.interets_capitalises_imposes = 185.76
+    _, remboursements = lire_grand_livre(GRAND_LIVRE)
+    grand_livre = remboursements.assign(**{"Capital remboursé (€)": remboursements["Capital remboursé (€)"] + 10})
+    controle = comparer(calculer_echeancier(p), grand_livre)
+    assert diagnostic_controle(controle) is None  # écart inexpliqué
+    e = calculer_echeancier(replace(p, capital_impose=capital_constate(controle, None)))
+    # Le capital des échéances comptabilisées est repris du grand livre…
+    assert diagnostic_controle(comparer(e, grand_livre)) == "capital"
+    # … puis l'échéance est recalculée pour finir au terme, sans rembourser plus que le capital.
+    assert len(e) == 60 and e["Solde (€)"].iloc[-1] == pytest.approx(0)
+    assert len(set(e["Échéance (€)"].iloc[9:-1])) == 1
+    assert e["Amortissement (€)"].sum() == pytest.approx(24_000)
+
+
+def test_appliquer_le_grand_livre_retire_l_assurance_passee_au_164():
+    p = pret_banque(468.45)
+    p.interets_capitalises_imposes, p.assurance_mensuelle = 185.76, 3.12
+    _, remboursements = lire_grand_livre(GRAND_LIVRE)
+    avec_assurance = remboursements.assign(**{"Capital remboursé (€)": remboursements["Capital remboursé (€)"] + 3.12})
+    controle = comparer(calculer_echeancier(p), avec_assurance)
+    nature = diagnostic_controle(controle)
+    assert nature == "capital + assurance"
+    assert list(capital_constate(controle, nature).values()) == remboursements["Capital remboursé (€)"].tolist()
+
+
+def test_appliquer_le_grand_livre_en_echeances_proratisees():
+    p = replace(pret_banque(468.45), interets_capitalises_imposes=185.76, echeance_proratisee=True)
+    _, remboursements = lire_grand_livre(GRAND_LIVRE)
+    controle = comparer(calculer_echeancier(p), remboursements)
+    assert diagnostic_controle(controle) is None  # la banque n'a pas proratisé
+    e = calculer_echeancier(replace(p, capital_impose=capital_constate(controle, None)))
+    assert diagnostic_controle(comparer(e, remboursements)) == "capital"
+    assert e["Solde (€)"].iloc[-1] == pytest.approx(0) and e["Amortissement (€)"].sum() == pytest.approx(24_000)
 
 
 def test_export_respecte_le_fichier_type(tmp_path):

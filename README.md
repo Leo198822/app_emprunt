@@ -22,15 +22,19 @@ L'écran se remplit en quelques étapes ; l'échéancier se génère dès que le
    bloquent la génération de l'échéancier.
    **Déblocages après la 1re échéance de remboursement du capital** (plusieurs déblocages) : l'option
    n'apparaît que dans ce cas. Jusqu'au dernier déblocage, les échéances sont au choix
+   - *proratisées* (**par défaut**) : réduites au prorata des fonds déjà versés, intérêts sur le capital
+     réellement versé, puis échéance recalculée après le dernier déblocage pour solder le prêt au terme ;
    - *totales* : échéance constante, calculée sur la totalité du prêt dès la 1re échéance, quelles que
-     soient les dates des déblocages (cas du prêt n°141) ;
-   - *proratisées* : réduites au prorata des fonds déjà versés, intérêts sur le capital réellement versé,
-     puis échéance recalculée après le dernier déblocage pour solder le prêt au terme.
+     soient les dates des déblocages (cas du prêt n°141).
 2. **Les déblocages** : import du grand livre du compte 164 exporté de Pennylane (recommandé : les
    remboursements comptabilisés servent aussi de contrôle ; les déblocages repérés s'affichent dans un
    tableau modifiable : double-clic pour corriger, cocher une ou plusieurs lignes puis bouton « 🗑️ Supprimer », ligne vide pour
    en ajouter, bouton « Annuler » pour revenir au grand livre), saisie manuelle, ou fonds versés en une fois
    (en déblocage partiel, saisir alors le montant débloqué). Le total des déblocages est affiché.
+   **Contrôle avec le grand livre** : le capital remboursé comptabilisé au compte 164 est comparé à
+   l'échéancier. En cas d'écart, l'interrupteur « Appliquer les montants du grand livre à l'échéancier »
+   reprend le capital comptabilisé (hors assurance/frais s'ils ont été passés au 164) pour les échéances
+   concernées, puis recalcule les échéances suivantes pour solder le prêt au terme.
 3. **Remboursements anticipés (facultatif)** : case « Le prêt a fait l'objet d'un remboursement anticipé ».
    Pour chacun : date, capital remboursé (ou case « Total »), indemnités (IRA). Le remboursement est intégré
    à l'échéance qui suit sa date (Amortissement ; indemnités en Autres frais). Après un remboursement

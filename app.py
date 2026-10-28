@@ -3,6 +3,8 @@
 import pandas as pd
 import streamlit as st
 
+from dataclasses import replace
+
 from echeancier import (
     PERIODICITES,
     Deblocage,
@@ -11,6 +13,8 @@ from echeancier import (
     ajouter_mois,
     ajuster_sur_solde,
     calculer,
+    calculer_echeancier,
+    capital_constate,
     comparer,
     diagnostic_controle,
     exporter_pennylane,
@@ -339,6 +343,7 @@ if len(deblocages) > 1 and premier_paiement and nb_echeances and type_remboursem
                 "proratisées : réduites au prorata des fonds déjà versés, puis recalculées après le dernier déblocage",
             ],
             key=cle("echeance_proratisee"),
+            index=1,  # proratisation par défaut, en fonction des dates de déblocage
             label_visibility="collapsed",
         ).startswith("proratisées")
 
@@ -503,6 +508,18 @@ with st.expander("🎯 Ajuster sur un capital restant dû connu (facultatif)"):
             else:
                 st.warning(message + f" — le plus proche possible au centime (écart {euros(precision)}).")
 
+# Contrôle avec le grand livre : établi sur l'échéancier calculé ; si l'utilisateur choisit d'appliquer les
+# montants du grand livre, l'échéancier est régénéré avec le capital constaté.
+cle_appliquer = cle("appliquer_grand_livre")
+controle_initial = nature_initiale = None
+grand_livre_applique = False
+if remboursements is not None and not remboursements.empty:
+    controle_initial = comparer(calculer_echeancier(params), remboursements)
+    nature_initiale = diagnostic_controle(controle_initial)
+    grand_livre_applique = nature_initiale != "capital" and st.session_state.get(cle_appliquer, False)
+    if grand_livre_applique:
+        params = replace(params, capital_impose=capital_constate(controle_initial, nature_initiale))
+
 resultat = calculer(params)
 echeancier = resultat.echeancier
 
@@ -565,12 +582,18 @@ if params.nb_echeances_differe and interets_capitalises:
         f"dernière échéance : {euros(echeancier['Échéance (€)'].iloc[-1])}."
     )
 
-if remboursements is not None and not remboursements.empty:
+if controle_initial is not None:
     st.subheader("Contrôle avec le grand livre")
-    controle = comparer(echeancier, remboursements)
-    nature = diagnostic_controle(controle)
-    n = len(controle)
-    if nature == "capital":
+    controle, nature, n = controle_initial, nature_initiale, len(controle_initial)
+    hors = f" (hors {nature.replace('capital + ', '')})" if nature and nature not in ("capital", "échéance complète") else ""
+    if grand_livre_applique:
+        st.success(
+            f"✅ Échéancier régénéré avec les montants du grand livre : le capital des {len(params.capital_impose)} "
+            f"échéance(s) comptabilisée(s) est repris du compte 164{hors}, et les échéances suivantes sont recalculées "
+            "pour solder le prêt au terme. Désactivez l'interrupteur pour revenir au calcul théorique."
+        )
+        controle = comparer(echeancier, remboursements)
+    elif nature == "capital":
         st.success(f"✅ Les {n} remboursements de capital du grand livre sont retrouvés au centime.")
     elif nature:
         st.info(
@@ -583,7 +606,14 @@ if remboursements is not None and not remboursements.empty:
     else:
         st.warning(
             "⚠️ Le capital remboursé en comptabilité diffère de l'échéancier : vérifiez l'échéance et le différé, "
-            "ou utilisez l'ajustement sur un capital restant dû connu."
+            "ou appliquez les montants du grand livre ci-dessous."
+        )
+    if nature != "capital":
+        st.toggle(
+            "Appliquer les montants du grand livre à l'échéancier",
+            key=cle_appliquer,
+            help=f"Reprend le capital remboursé comptabilisé au compte 164 pour chaque échéance concernée{hors} ; "
+            "les échéances suivantes sont recalculées sur le capital restant dû pour finir au terme.",
         )
     with st.expander("Détail du contrôle : grand livre / échéancier"):
         st.dataframe(

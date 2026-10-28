@@ -70,6 +70,8 @@ class ParametresPret:
     autres_frais: float = 0.0
     autres_frais_en_pourcentage: bool = False  # True : % du capital ; False : montant total
     remboursements_anticipes: list[RemboursementAnticipe] = field(default_factory=list)
+    capital_impose: dict[str, float] = field(default_factory=dict)  # « AAAA-MM » → capital remboursé constaté
+    # (grand livre) ; après le dernier, l'échéance est recalculée pour finir au terme
     anticipe_reduit_duree: bool = True  # après un remboursement partiel : True = durée réduite (échéance
     # maintenue) ; False = échéance recalculée sur la durée restante
     montant_debloque: float | None = None  # déblocage partiel : montant réellement versé (None = en totalité)
@@ -221,6 +223,19 @@ class Anticipes:
     reduire_duree: bool = True
     t: float = 0.0  # taux périodique, pour recalculer l'échéance
     appliques: dict[int, float] = field(default_factory=dict)  # capital effectivement remboursé par anticipation
+    imposes: dict[int, float] = field(default_factory=dict)  # capital constaté (grand livre) par échéance
+
+    def amortissement(self, k: int, a: float, restant: float) -> float:
+        """Amortissement de l'échéance k : celui constaté au grand livre s'il existe, sinon `a`."""
+        if k in self.imposes:
+            return min(max(round(self.imposes[k], 2), 0.0), restant)
+        return a
+
+    def apres_constate(self, k: int, restant_apres: float, n: int) -> float | None:
+        """Après le dernier montant constaté : échéance recalculée sur le capital restant, jusqu'au terme."""
+        if self.imposes and k == max(self.imposes) and restant_apres > 0.005 and k < n - 1:
+            return echeance_pour(restant_apres, self.t, n - k - 1)
+        return None
 
     def appliquer(self, k: int, a: float, restant: float) -> float:
         """Capital remboursé par anticipation à l'échéance k, en plus de l'amortissement normal `a`."""
@@ -258,10 +273,11 @@ def tableau_constant(
                 interet = round(echeance - a, 2)
         else:
             a = min(max(round(echeance - interet, 2), 0.0), restant)
+        a = anticipes.amortissement(k, a, restant)
         a = round(a + anticipes.appliquer(k, a, restant), 2)
         lignes.append((interet, a))
         restant = round(restant - a, 2)
-        echeance = anticipes.nouvelle_echeance(k, restant, n) or echeance
+        echeance = anticipes.apres_constate(k, restant, n) or anticipes.nouvelle_echeance(k, restant, n) or echeance
     return lignes
 
 
@@ -307,10 +323,14 @@ def tableau_proratise(
                 echeance_finale = echeance_pour(restant, p.taux_periodique, n - k)
             interet = round(restant * facteur, 2)
             a = min(max(round(echeance_finale - interet, 2), 0.0), restant)
+        a = anticipes.amortissement(k, a, restant)
         a = round(a + anticipes.appliquer(k, a, restant), 2)
         lignes.append((interet, a))
         restant = round(restant - a, 2)
-        if k in anticipes.appliques and echeance_finale is not None and restant > 0.005:
+        apres_constate = anticipes.apres_constate(k, restant, n)
+        if apres_constate is not None and reste_a_verser <= 0.005:
+            echeance_finale = apres_constate
+        elif k in anticipes.appliques and echeance_finale is not None and restant > 0.005:
             # Après un remboursement anticipé : échéance maintenue (durée réduite) ou recalculée.
             echeance_finale = anticipes.nouvelle_echeance(k, restant, n) or echeance_finale
         debut = fin
@@ -363,6 +383,9 @@ def calculer(p: ParametresPret) -> Resultat:
         k = next((j for j, d in enumerate(dates[k0:]) if d >= ra.date), None)
         if k is not None:
             anticipes.par_echeance.setdefault(k, []).append(ra)
+    for k, d in enumerate(dates[k0:]):  # capital constaté au grand livre, rapproché par mois
+        if d.strftime("%Y-%m") in p.capital_impose:
+            anticipes.imposes[k] = p.capital_impose[d.strftime("%Y-%m")]
 
     echeance = None
     proratise = (
@@ -376,10 +399,12 @@ def calculer(p: ParametresPret) -> Resultat:
         lignes_amort, restant = [], base
         for k, facteur in enumerate(facteurs):
             a = restant if k == n - 1 else min(part, restant)
+            a = anticipes.amortissement(k, a, restant)
             a = round(a + anticipes.appliquer(k, a, restant), 2)
             lignes_amort.append((round(restant * facteur, 2), a))
             restant = round(restant - a, 2)
-            if k in anticipes.appliques and not anticipes.reduire_duree and k < n - 1:
+            dernier_constate = bool(anticipes.imposes) and k == max(anticipes.imposes)
+            if (dernier_constate or (k in anticipes.appliques and not anticipes.reduire_duree)) and k < n - 1:
                 part = round(restant / (n - k - 1), 2)  # amortissement réparti sur la durée restante
     else:
         if p.echeance_imposee:
@@ -387,7 +412,7 @@ def calculer(p: ParametresPret) -> Resultat:
             if p.echeance_assurance_comprise:
                 # Échéance saisie assurance comprise : on retire l'assurance de la 1re échéance d'amortissement.
                 echeance = round(echeance - p.assurance_sur(base), 2)
-            if plafond and p.interets_capitalises_imposes is None and not p.partiel:
+            if plafond and p.interets_capitalises_imposes is None and not p.partiel and not p.capital_impose:
                 # Différé capitalisé : l'échéance de la banque fixe le capital amorti, donc les intérêts
                 # capitalisés — retenus seulement s'ils restent vraisemblables (entre 0 et le plafond).
                 calibre = calibrer_base(echeance, t, facteurs, p.remboursements_constates)
@@ -577,6 +602,22 @@ def comparer(echeancier: pd.DataFrame, remboursements: pd.DataFrame) -> pd.DataF
     comp = reel.drop(columns="Date").merge(calc, on="Mois", how="left")
     comp["Écart (€)"] = (comp["Capital remboursé (€)"] - comp["Amortissement (€)"]).round(2)
     return comp[["Date", "Capital remboursé (€)", "Amortissement (€)", "Écart (€)", "Assurance (€)", "Autres frais (€)", "Échéance (€)"]]
+
+
+def capital_constate(controle: pd.DataFrame, nature: str | None) -> dict[str, float]:
+    """Capital remboursé par mois d'après le grand livre, à appliquer à l'échéancier (« AAAA-MM » → montant).
+
+    Si les débits du compte 164 incluent aussi l'assurance, les frais ou toute l'échéance (voir
+    `diagnostic_controle`), ces éléments sont retirés pour ne garder que le capital."""
+    c = controle.dropna(subset=["Amortissement (€)"])
+    capital = c["Capital remboursé (€)"].copy()
+    if nature and "assurance" in nature:
+        capital -= c["Assurance (€)"]
+    if nature and "frais" in nature:
+        capital -= c["Autres frais (€)"]
+    if nature == "échéance complète":
+        capital -= c["Échéance (€)"] - c["Amortissement (€)"]
+    return {d.strftime("%Y-%m"): round(float(v), 2) for d, v in zip(c["Date"], capital)}
 
 
 def diagnostic_controle(controle: pd.DataFrame) -> str | None:
