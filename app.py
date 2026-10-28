@@ -631,6 +631,39 @@ if remboursements is not None and not remboursements.empty:
 # Modifications faites par l'utilisateur directement dans le tableau d'échéancier (par date d'échéance).
 cle_corrections = cle("corrections")
 corrections = st.session_state.setdefault(cle_corrections, {})
+# Historique des états précédents des corrections : une entrée par modification validée dans le tableau.
+historique = st.session_state.setdefault(cle_corrections + "_historique", [])
+
+
+def annuler_derniere_modification() -> None:
+    if historique:
+        st.session_state[cle_corrections] = historique.pop()
+        st.session_state[cle_corrections + "_version"] = st.session_state.get(cle_corrections + "_version", 0) + 1
+
+
+def annuler_toutes_les_modifications() -> None:
+    st.session_state[cle_corrections] = {}
+    historique.clear()
+    st.session_state[cle_corrections + "_version"] = st.session_state.get(cle_corrections + "_version", 0) + 1
+
+
+def boutons_annulation(zone_derniere, zone_tout) -> None:
+    """« Annuler la dernière modification » et « Tout annuler », affichés s'il y a des modifications."""
+    if historique:
+        zone_derniere.button(
+            "↶ Annuler la dernière modification",
+            help="Revient à l'échéancier tel qu'il était avant votre dernière saisie dans le tableau.",
+            on_click=annuler_derniere_modification,
+            width="stretch",
+        )
+    if corrections:
+        zone_tout.button(
+            f"↺ Tout annuler ({len(historique)})" if historique else "↺ Tout annuler",
+            help="Annule toutes vos modifications du tableau et revient à l'échéancier calculé.",
+            on_click=annuler_toutes_les_modifications,
+            width="stretch",
+        )
+
 if corrections:
     params = replace(params, corrections=corrections)
 
@@ -664,11 +697,7 @@ if insuffisance := fonds_insuffisants(params, echeancier):
         + (", ou annulez vos modifications du tableau" if corrections else "")
         + "."
     )
-    if corrections:
-        st.button(
-            f"↺ Annuler mes modifications du tableau ({len(corrections)})",
-            on_click=lambda: st.session_state.update({cle_corrections: {}}),
-        )
+    boutons_annulation(*st.columns(2))
     st.stop()
 
 m1, m2, m3, m4 = st.columns(4)
@@ -819,16 +848,11 @@ st.info(
     "suivantes sont ajustées pour solder le prêt au terme (un intérêt modifié conserve l'échéance ; une échéance "
     "modifiée fixe le capital)."
 )
-consignes, bouton_annuler = st.columns([3, 1], vertical_alignment="center")
-if corrections:
-    consignes.caption(f"✏️ {len(corrections)} ligne(s) modifiée(s), repérée(s) dans la 1re colonne.")
-if corrections:
-    bouton_annuler.button(
-        f"↺ Annuler ({len(corrections)})",
-        help=f"Annule vos {len(corrections)} modification(s) du tableau et revient à l'échéancier calculé.",
-        on_click=lambda: st.session_state.update({cle_corrections: {}}),
-        width="stretch",
-    )
+if corrections or historique:
+    consignes, zone_derniere, zone_tout = st.columns([2, 1.3, 1], vertical_alignment="center")
+    if corrections:
+        consignes.caption(f"✏️ {len(corrections)} ligne(s) modifiée(s), repérée(s) dans la 1re colonne.")
+    boutons_annulation(zone_derniere, zone_tout)
 if message_tableau := st.session_state.pop(cle_corrections + "_message", None):
     st.warning(f"⚠️ {message_tableau}")
 version_tableau = st.session_state.setdefault(cle_corrections + "_version", 0)
@@ -856,6 +880,7 @@ st.data_editor(
 )
 modifications = st.session_state.get(cle_tableau, {}).get("edited_rows", {})
 if modifications:
+    avant = {jour: dict(valeurs) for jour, valeurs in corrections.items()}  # pour « Annuler la dernière modification »
     ignorees, refusees = 0, []
     # Montant saisi invraisemblable (négatif, ou supérieur au capital et aux intérêts de tout le prêt) : refusé.
     plafond_saisie = round(params.capital + resultat.interets_capitalises_retenus + echeancier["Intérêt (€)"].sum(), 2)
@@ -902,6 +927,8 @@ if modifications:
         )
     if messages:
         st.session_state[cle_corrections + "_message"] = " ".join(messages)
+    if corrections != avant:
+        historique.append(avant)
     st.session_state[cle_corrections + "_version"] = version_tableau + 1
     st.rerun()
 

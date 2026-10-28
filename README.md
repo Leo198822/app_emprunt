@@ -59,7 +59,8 @@ L'écran se remplit en quelques étapes ; l'échéancier se génère dès que le
    capital ou une échéance et saisissez le montant voulu. L'échéancier est recalculé à chaque modification :
    les échéances suivantes sont ajustées pour solder le prêt au terme (un intérêt modifié conserve
    l'échéance ; une échéance modifiée fixe le capital). Les lignes modifiées sont repérées par ✏️ ;
-   « ↺ Annuler » revient à l'échéancier calculé. La dernière échéance solde toujours le capital.
+   « ↶ Annuler la dernière modification » revient à l'état précédant la dernière saisie (plusieurs fois
+   de suite si besoin) ; « ↺ Tout annuler » revient à l'échéancier calculé. La dernière échéance solde toujours le capital.
    Partie « Contrôler l'échéancier avant téléchargement », en deux temps : 1. appliquer les montants du
    grand livre (si importé) ; 2. s'il reste des écarts, modifier directement l'échéancier. Le bouton de
    téléchargement est placé sous le tableau.
