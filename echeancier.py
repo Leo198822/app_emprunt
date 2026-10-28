@@ -514,6 +514,24 @@ def calculer_echeancier(p: ParametresPret) -> pd.DataFrame:
 
 
 @dataclass
+class FondsInsuffisants:
+    date_echeance: date  # 1re échéance où le capital remboursé dépasse les fonds versés
+    depassement: float  # capital remboursé en trop à cette date
+    deblocages_tardifs: list[Deblocage]  # déblocages versés après cette échéance
+
+
+def fonds_insuffisants(p: ParametresPret, echeancier: pd.DataFrame) -> FondsInsuffisants | None:
+    """Chronologie incohérente : à une échéance, le capital remboursé dépasse les fonds déjà versés (solde
+    négatif), parce que des déblocages arrivent trop tard au regard du rythme de remboursement."""
+    negatifs = echeancier[echeancier["Solde (€)"] < -0.005]
+    if negatifs.empty:
+        return None
+    ligne = negatifs.iloc[0]
+    jour = pd.Timestamp(ligne["Date"]).date()
+    return FondsInsuffisants(jour, round(-float(ligne["Solde (€)"]), 2), [d for d in p.deblocages if d.date > jour])
+
+
+@dataclass
 class Ajustement:
     parametres: ParametresPret  # paramètres recalculés (inchangés si l'ajustement est impossible)
     date_echeance: date  # échéance retenue (dernière à la date saisie ou avant)

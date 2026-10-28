@@ -18,8 +18,17 @@ L'écran se remplit en quelques étapes ; l'échéancier se génère dès que le
      garde la durée saisie, les échéances suivantes restant à 0 € hors assurance et frais ;
    - *durée maintenue* : l'échéance est recalculée sur le montant débloqué (→ 80 échéances de 106,96 €).
    Si l'échéance de la banque est saisie, c'est elle qui détermine quand le capital est soldé.
-   Des déblocages supérieurs au montant emprunté, ou un 1er déblocage postérieur à la 1re échéance,
-   bloquent la génération de l'échéancier.
+   **Contrôles de chronologie** : bloquent la génération de l'échéancier, avec un message expliquant quoi
+   corriger :
+   - des déblocages supérieurs au montant emprunté ;
+   - un 1er déblocage postérieur à la 1re échéance, ou un déblocage postérieur à la dernière échéance ;
+   - une ligne de tableau dont la date est vide, non reconnue ou invraisemblable (année hors 1990-2100),
+     ou dont le montant est vide (la ligne n'est plus ignorée sans prévenir) ;
+   - un déblocage postérieur à un remboursement anticipé total ;
+   - un capital remboursé qui dépasserait les fonds versés à une échéance (déblocage trop tardif par
+     rapport au rythme de remboursement, ou modifications du tableau) : le message nomme l'échéance et
+     les déblocages concernés.
+   Une erreur de calcul imprévue affiche un message en français au lieu du détail technique.
    **Déblocages après la 1re échéance de remboursement du capital** (plusieurs déblocages) : l'option
    n'apparaît que dans ce cas. Jusqu'au dernier déblocage, les échéances sont au choix
    - *proratisées* (**par défaut**) : réduites au prorata des fonds déjà versés, intérêts sur le capital
@@ -108,6 +117,13 @@ Règles déduites du grand livre d'un prêt Crédit Agricole à déblocages succ
   - *% du capital restant dû* : taux annuel appliqué au capital restant dû en début de période
     (× nombre de mois / 12) ; l'assurance diminue avec le capital et s'arrête quand il est soldé.
 - Autres frais : répartis également sur toutes les échéances.
+
+## Traduction automatique du navigateur
+
+La page est déclarée en français et marquée « à ne pas traduire » : la traduction automatique de Chrome
+modifiait la page pendant ses mises à jour et provoquait des erreurs « removeChild » / « NotFoundError ».
+Si un message de ce type apparaît encore, désactivez la traduction pour ce site (icône de traduction dans
+la barre d'adresse → « Ne jamais traduire ce site ») puis rechargez la page.
 
 ## Lancer en local
 

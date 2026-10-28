@@ -18,10 +18,29 @@ from echeancier import (
     comparer,
     diagnostic_controle,
     exporter_pennylane,
+    fonds_insuffisants,
     lire_grand_livre,
 )
 
 st.set_page_config(page_title="Échéancier Pennylane", page_icon="📅", layout="centered")
+
+# La traduction automatique du navigateur (Chrome « Traduire cette page ») modifie la page pendant que l'application
+# la met à jour, ce qui provoque des erreurs « removeChild » : la page est déclarée en français, à ne pas traduire.
+st.html(
+    """<script>
+    const racine = window.parent.document.documentElement;
+    racine.lang = "fr";
+    racine.setAttribute("translate", "no");
+    racine.classList.add("notranslate");
+    if (!window.parent.document.querySelector('meta[name="google"]')) {
+        const meta = window.parent.document.createElement("meta");
+        meta.name = "google";
+        meta.content = "notranslate";
+        window.parent.document.head.appendChild(meta);
+    }
+    </script>""",
+    unsafe_allow_javascript=True,
+)
 
 
 def nombre(valeur: float) -> str:
@@ -83,11 +102,36 @@ def editer_lignes(
             st.session_state[donnees] = saisie[~selection].drop(columns="Sélection").reset_index(drop=True)
             st.session_state[version] += 1
             st.rerun()
-    return saisie.drop(columns="Sélection").dropna(subset=requises)
+    return saisie.drop(columns="Sélection")
+
+
+def lignes_incompletes(saisie: pd.DataFrame, colonne_montant: str, objet: str) -> list[str]:
+    """Lignes que le calcul ne peut pas prendre en compte (date manquante ou illisible, date invraisemblable,
+    montant manquant), décrites en clair pour l'utilisateur."""
+    erreurs = []
+    for numero, (_, r) in enumerate(saisie.iterrows(), start=1):
+        date_ok, montant_ok = pd.notna(r["Date"]), pd.notna(r[colonne_montant])
+        if not date_ok and not montant_ok:
+            continue  # ligne vide
+        montant = f" de {euros(float(r[colonne_montant]))}" if montant_ok else ""
+        if not date_ok:
+            erreurs.append(
+                f"Ligne n°{numero} ({objet}{montant}) : la date est vide ou n'a pas été reconnue. Double-cliquez sur la "
+                "cellule et saisissez-la au format JJ/MM/AAAA (ou choisissez-la dans le calendrier)."
+            )
+        elif not 1990 <= pd.Timestamp(r["Date"]).year <= 2100:
+            erreurs.append(
+                f"Ligne n°{numero} ({objet}{montant}) : la date du {pd.Timestamp(r['Date']).strftime('%d/%m/%Y')} n'est "
+                "pas vraisemblable. Vérifiez l'année."
+            )
+        elif not montant_ok and colonne_montant == "Montant (€)" and objet == "déblocage":
+            erreurs.append(f"Ligne n°{numero} ({objet} du {pd.Timestamp(r['Date']).strftime('%d/%m/%Y')}) : le montant est vide.")
+    return erreurs
 
 
 def editer_deblocages(initial: pd.DataFrame, cle_tableau: str, annulable: bool = False) -> list[Deblocage]:
-    """Tableau modifiable des déblocages (dates et montants)."""
+    """Tableau modifiable des déblocages (dates et montants) ; les lignes incomplètes sont signalées et ajoutées
+    aux erreurs de chronologie (l'échéancier n'est alors pas généré)."""
     saisie = editer_lignes(
         initial,
         cle_tableau,
@@ -98,6 +142,9 @@ def editer_deblocages(initial: pd.DataFrame, cle_tableau: str, annulable: bool =
         ["Date", "Montant (€)"],
         "revient aux déblocages du grand livre." if annulable else "",
     )
+    erreurs_saisie.extend(lignes_incompletes(saisie, "Montant (€)", "déblocage"))
+    saisie = saisie.dropna(subset=["Date", "Montant (€)"])
+    saisie = saisie[pd.to_datetime(saisie["Date"]).dt.year.between(1990, 2100)]
     return sorted(
         (Deblocage(pd.Timestamp(r["Date"]).date(), round(float(r["Montant (€)"]), 2)) for _, r in saisie.iterrows()),
         key=lambda d: d.date,
@@ -108,6 +155,20 @@ def tableau_euros(df: pd.DataFrame):
     affiche = df.copy()
     affiche["Date"] = pd.to_datetime(affiche["Date"]).dt.strftime("%d/%m/%Y")
     return affiche.style.format({c: nombre for c in affiche.columns if c != "Date"})
+
+
+def sans_plantage(fonction, *args, **kwargs):
+    """Exécute un calcul ; en cas d'erreur imprévue, affiche un message compréhensible au lieu du détail technique
+    et arrête la page proprement."""
+    try:
+        return fonction(*args, **kwargs)
+    except Exception:
+        st.error(
+            "⛔ Le calcul n'a pas pu aboutir avec les informations saisies. Vérifiez en particulier la chronologie des "
+            "dates (déblocages, 1re échéance, remboursements anticipés) et les montants. Si le problème persiste, "
+            "cliquez sur « 🔄 Remettre à zéro » en haut de la page."
+        )
+        st.stop()
 
 
 titre, bouton = st.columns([3, 1], vertical_alignment="center")
@@ -251,6 +312,7 @@ source = st.radio(
     horizontal=True,
 )
 deblocages, remboursements = [], None
+erreurs_saisie = []  # lignes de tableau illisibles (date non reconnue, montant manquant…)
 if source.startswith("Importer"):
     grand_livre = st.file_uploader(
         "Grand livre du compte 164 exporté de Pennylane (.xlsx)", key=cle("grand_livre"),
@@ -261,7 +323,10 @@ if source.startswith("Importer"):
         try:
             importes, remboursements = lire_grand_livre(grand_livre)
         except Exception as erreur:  # fichier inattendu
-            st.error(f"Lecture du grand livre impossible : {erreur}")
+            st.error(
+                "⛔ Lecture du grand livre impossible : vérifiez qu'il s'agit bien de l'export Excel (.xlsx) du grand "
+                f"livre du compte 164 depuis Pennylane, sans modification de ses colonnes. (Détail : {erreur})"
+            )
         else:
             texte, bouton_annuler = st.columns([3, 1], vertical_alignment="center")
             texte.markdown(f"**{len(importes)} déblocage(s) repéré(s) dans le grand livre**, modifiables ci-dessous :")
@@ -291,16 +356,29 @@ montant_debloque = None
 if partiel:
     montant_debloque = round(sum(d.montant for d in deblocages), 2) if deblocages else (montant_unique if not source.startswith(("Importer", "Saisir")) else None)
 
-deblocage_tardif = None
+erreurs_dates = list(erreurs_saisie)  # saisie ou chronologie des déblocages incohérente : pas d'échéancier
 if deblocages and premier_paiement:
     premier_deblocage = min(d.date for d in deblocages)
     if premier_deblocage > premier_paiement:
-        deblocage_tardif = premier_deblocage
-        st.error(
-            f"⛔ Le 1er déblocage ({premier_deblocage.strftime('%d/%m/%Y')}) intervient après la date de la 1re "
-            f"échéance ({premier_paiement.strftime('%d/%m/%Y')}) : un remboursement ne peut pas précéder le versement "
-            "des fonds. Corrigez la date du déblocage ou celle de la 1re échéance : l'échéancier ne peut pas être généré."
+        erreurs_dates.append(
+            f"Le 1er déblocage ({premier_deblocage.strftime('%d/%m/%Y')}) intervient après la date de la 1re "
+            f"échéance ({premier_paiement.strftime('%d/%m/%Y')}) : un remboursement ne peut pas précéder le "
+            "versement des fonds. Corrigez la date du déblocage ou celle de la 1re échéance."
         )
+    if nb_echeances:
+        derniere_echeance = ajouter_mois(
+            premier_paiement, (int(nb_echeances) - 1) * PERIODICITES[periodicite], premier_paiement.day
+        )
+        for d in deblocages:
+            if d.date > derniere_echeance:
+                erreurs_dates.append(
+                    f"Le déblocage du {d.date.strftime('%d/%m/%Y')} ({euros(d.montant)}) est postérieur à la "
+                    f"dernière échéance du prêt ({derniere_echeance.strftime('%d/%m/%Y')}) : des fonds ne peuvent pas "
+                    "être versés après la fin du remboursement. Vérifiez l'année de ce déblocage, le nombre "
+                    "d'échéances ou la date de la 1re échéance."
+                )
+for erreur in erreurs_dates:
+    st.error(f"⛔ {erreur}")
 
 depassement = None
 montant_verse = round(sum(d.montant for d in deblocages), 2) if deblocages else (montant_debloque or 0)
@@ -373,6 +451,9 @@ if st.checkbox("Le prêt a fait l'objet d'un **remboursement anticipé**", key=c
         },
         ["Date"],
     )
+    erreurs_anticipes.extend(e[0].lower() + e[1:].rstrip(".") for e in lignes_incompletes(saisie_ra, "Montant (€)", "remboursement"))
+    saisie_ra = saisie_ra.dropna(subset=["Date"])
+    saisie_ra = saisie_ra[pd.to_datetime(saisie_ra["Date"]).dt.year.between(1990, 2100)]
     for _, r in saisie_ra.iterrows():
         total_ra = bool(r["Total"]) if pd.notna(r["Total"]) else False
         montant_ra = float(r["Montant (€)"]) if pd.notna(r["Montant (€)"]) else 0.0
@@ -410,8 +491,14 @@ if st.checkbox("Le prêt a fait l'objet d'un **remboursement anticipé**", key=c
                     f"le remboursement du {ra.date.strftime('%d/%m/%Y')} précède la 1re échéance de remboursement "
                     f"du capital ({premiere_amortissement.strftime('%d/%m/%Y')})"
                 )
-        for erreur in erreurs_anticipes:
-            st.error(f"⛔ Remboursement anticipé : {erreur}.")
+        for ra in anticipes:
+            if ra.total and (apres := [d for d in deblocages if d.date > ra.date]):
+                erreurs_anticipes.append(
+                    f"le remboursement total du {ra.date.strftime('%d/%m/%Y')} précède le déblocage du "
+                    f"{apres[0].date.strftime('%d/%m/%Y')} : des fonds ne peuvent pas être versés une fois le prêt soldé"
+                )
+    for erreur in erreurs_anticipes:
+        st.error(f"⛔ Remboursement anticipé : {erreur}.")
 
 # --- Résultat ----------------------------------------------------------------------------
 st.header("Échéancier", divider="gray")
@@ -439,8 +526,12 @@ if manquants:
 if erreurs_anticipes:
     st.error("⛔ Échéancier non généré : corrigez les remboursements anticipés (voir ci-dessus).")
     st.stop()
-if depassement or deblocage_tardif:
-    motif = "les déblocages dépassent le montant emprunté" if depassement else "le 1er déblocage est postérieur à la 1re échéance"
+if depassement or erreurs_dates:
+    motif = (
+        "les déblocages dépassent le montant emprunté"
+        if depassement
+        else "les dates des déblocages ne sont pas cohérentes avec celles des échéances"
+    )
     st.error(f"⛔ Échéancier non généré : {motif} (voir l'étape 2).")
     st.stop()
 
@@ -480,7 +571,7 @@ with st.expander("🎯 Ajuster sur un capital restant dû connu (facultatif)"):
         "Capital restant dû à cette date (€)", key=cle("solde_reference"), min_value=0.0, value=None, step=0.01, format="%.2f", placeholder="ex. 21 859,20"
     )
     if date_reference and solde_reference is not None:
-        ajustement = ajuster_sur_solde(params, date_reference, solde_reference)
+        ajustement = sans_plantage(ajuster_sur_solde, params, date_reference, solde_reference)
         if ajustement is None:
             st.error("⛔ Ajustement impossible : la date saisie est antérieure à la 1re échéance.")
         elif not ajustement.possible:
@@ -514,7 +605,7 @@ cle_appliquer = cle("appliquer_grand_livre")
 controle_initial = nature_initiale = None
 grand_livre_applique = False
 if remboursements is not None and not remboursements.empty:
-    controle_initial = comparer(calculer_echeancier(params), remboursements)
+    controle_initial = sans_plantage(lambda: comparer(calculer_echeancier(params), remboursements))
     nature_initiale = diagnostic_controle(controle_initial)
     grand_livre_applique = nature_initiale != "capital" and st.session_state.get(cle_appliquer, False)
     if grand_livre_applique:
@@ -526,8 +617,32 @@ corrections = st.session_state.setdefault(cle_corrections, {})
 if corrections:
     params = replace(params, corrections=corrections)
 
-resultat = calculer(params)
+resultat = sans_plantage(calculer, params)
 echeancier = resultat.echeancier
+if insuffisance := fonds_insuffisants(params, echeancier):
+    tardifs = insuffisance.deblocages_tardifs
+    st.error(
+        f"⛔ Échéancier non généré : à l'échéance du {insuffisance.date_echeance.strftime('%d/%m/%Y')}, le capital "
+        f"remboursé dépasserait de {euros(insuffisance.depassement)} les fonds versés à cette date"
+        + (
+            " : le" + ("s déblocages du " if len(tardifs) > 1 else " déblocage du ")
+            + ", du ".join(d.date.strftime('%d/%m/%Y') for d in tardifs)
+            + (" arrivent" if len(tardifs) > 1 else " arrive")
+            + " trop tard par rapport au rythme de remboursement"
+            if tardifs
+            else ""
+        )
+        + ". Vérifiez les dates des déblocages"
+        + (", ou choisissez des échéances « proratisées » à l'étape 2" if len(deblocages) > 1 and not echeance_proratisee and type_remboursement == "Échéances constantes" else "")
+        + (", ou annulez vos modifications du tableau" if corrections else "")
+        + "."
+    )
+    if corrections:
+        st.button(
+            f"↺ Annuler mes modifications du tableau ({len(corrections)})",
+            on_click=lambda: st.session_state.update({cle_corrections: {}}),
+        )
+    st.stop()
 
 m1, m2, m3, m4 = st.columns(4)
 m1.metric(
@@ -630,7 +745,7 @@ else:
                 f"✅ Montants du grand livre appliqués : le capital des {len(params.capital_impose)} échéance(s) "
                 "comptabilisée(s) est repris, et les échéances suivantes sont recalculées pour solder le prêt au terme."
             )
-    controle = comparer(echeancier, remboursements)
+    controle = sans_plantage(comparer, echeancier, remboursements)
     ecarts_restants = diagnostic_controle(controle) != "capital"
     with st.expander("Détail : grand livre / échéancier"):
         st.dataframe(
@@ -741,7 +856,7 @@ if modifications:
 
 st.download_button(
     "📥 Télécharger l'échéancier Pennylane (.xlsx)",
-    data=exporter_pennylane(params, echeancier),
+    data=sans_plantage(exporter_pennylane, params, echeancier),
     file_name="Echeancier_pennylane.xlsx",
     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     type="primary",

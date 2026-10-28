@@ -19,6 +19,7 @@ from echeancier import (
     calculer_echeancier,
     comparer,
     exporter_pennylane,
+    fonds_insuffisants,
     lire_grand_livre,
 )
 
@@ -565,3 +566,30 @@ def test_export_respecte_le_fichier_type(tmp_path):
     assert [c.value for c in ws[2]] == [24_000, 4.17, 0, 0, 0, 0, 60]
     assert ws.max_row == 65
     assert ws["A6"].number_format == "dd/mm/yyyy"
+
+
+def test_pas_de_fonds_insuffisants_sur_le_pret_de_la_banque():
+    p = pret_banque(468.45)
+    assert fonds_insuffisants(p, calculer_echeancier(p)) is None
+
+
+def test_deblocage_trop_tardif_signale_au_lieu_d_un_solde_negatif():
+    # Échéances totales : le prêt complet est amorti dès la 1re échéance, mais le dernier déblocage arrive
+    # après que le capital déjà versé est entièrement remboursé.
+    p = ParametresPret(
+        capital=20_000,
+        taux=3,
+        nb_echeances=12,
+        date_premier_paiement=date(2026, 1, 5),
+        jour_prelevement=5,
+        deblocages=[Deblocage(date(2025, 12, 10), 5_000), Deblocage(date(2026, 11, 20), 15_000)],
+    )
+    echeancier = calculer_echeancier(p)
+    insuffisance = fonds_insuffisants(p, echeancier)
+    assert insuffisance is not None
+    assert insuffisance.depassement > 0
+    assert insuffisance.date_echeance < date(2026, 11, 20)
+    assert [d.date for d in insuffisance.deblocages_tardifs] == [date(2026, 11, 20)]
+    # Échéances proratisées : les remboursements suivent les fonds versés, la chronologie est cohérente.
+    p = replace(p, echeance_proratisee=True)
+    assert fonds_insuffisants(p, calculer_echeancier(p)) is None
