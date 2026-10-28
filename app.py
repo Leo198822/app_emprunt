@@ -592,8 +592,20 @@ if params.nb_echeances_differe and interets_capitalises:
         f"dernière échéance : {euros(echeancier['Échéance (€)'].iloc[-1])}."
     )
 
-if controle_initial is not None:
-    st.subheader("Contrôle avec le grand livre")
+st.subheader("Contrôler l'échéancier avant téléchargement")
+st.warning(
+    "🔎 **Vérifiez l'échéancier avant de le télécharger** en le comparant au tableau d'amortissement de la banque "
+    "(intérêts, capital, échéance, capital restant dû). Pour le corriger : **soit en appliquant les montants du "
+    "grand livre** (①), **soit en modifiant directement l'échéancier ci-dessous** (②)."
+)
+
+st.markdown("##### ① Appliquer les montants du grand livre")
+if controle_initial is None:
+    st.caption(
+        "Disponible si vous importez le grand livre du compte d'emprunt à l'étape 2 : le capital remboursé "
+        "comptabilisé est alors comparé à l'échéancier, et peut lui être appliqué."
+    )
+else:
     controle, nature, n = controle_initial, nature_initiale, len(controle_initial)
     hors = f" (hors {nature.replace('capital + ', '')})" if nature and nature not in ("capital", "échéance complète") else ""
     if grand_livre_applique:
@@ -634,20 +646,17 @@ if controle_initial is not None:
             width="stretch",
         )
 
-st.subheader("Tableau d'échéancier (fichier Pennylane)")
 COLONNES_MODIFIABLES = {
     "Intérêt (€)": "interet",
     "Assurance (€)": "assurance",
     "Autres frais (€)": "frais",
     "Amortissement (€)": "amortissement",
 }
-st.warning(
-    "🔎 **Vérifiez l'échéancier avant de le télécharger.** Comparez-le au tableau d'amortissement de la banque "
-    "(intérêts, capital, échéance, capital restant dû). En cas d'écart, **vous pouvez le modifier directement "
-    "dans le tableau ci-dessous** :  \n"
-    "✏️ double-cliquez sur un **intérêt**, une **assurance**, des **frais**, un **capital** ou une **échéance**, "
-    "saisissez le bon montant puis appuyez sur Entrée ;  \n"
-    "🔄 l'échéancier est recalculé aussitôt : les échéances suivantes sont ajustées pour solder le prêt au terme "
+st.markdown("##### ② Modifier directement l'échéancier")
+st.info(
+    "✏️ Double-cliquez sur un **intérêt**, une **assurance**, des **frais**, un **capital** ou une **échéance**, "
+    "saisissez le bon montant puis appuyez sur Entrée.  \n"
+    "🔄 L'échéancier est recalculé aussitôt : les échéances suivantes sont ajustées pour solder le prêt au terme "
     "(un intérêt modifié conserve l'échéance ; une échéance modifiée fixe le capital)."
 )
 consignes, bouton_annuler = st.columns([3, 1], vertical_alignment="center")
