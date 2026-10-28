@@ -160,20 +160,6 @@ nb_differe = c2.number_input(
     help="Premières échéances sans remboursement de capital, pendant le déblocage des fonds.",
 )
 
-c1, _ = st.columns(2)
-capital_pleine = c1.number_input(
-    "Capital remboursé à la 1re échéance pleine (€)",
-    key=cle("capital_pleine"),
-    min_value=0.0,
-    value=None,
-    step=0.01,
-    format="%.2f",
-    placeholder="facultatif — ex. 391,41",
-    help="Part de capital (hors intérêts et assurance) de la 1re échéance non proratisée, c'est-à-dire la 1re "
-    "échéance de remboursement une fois tous les fonds versés, lue sur le tableau de la banque ou un relevé. "
-    "L'échéance est recalculée pour retrouver ce montant, puis maintenue jusqu'au terme.",
-)
-
 interets_capitalises = True
 if nb_differe:
     interets_capitalises = st.radio(
@@ -469,7 +455,6 @@ params = ParametresPret(
     interets_differe_capitalises=interets_capitalises,
     echeance_imposee=echeance_banque or None,
     echeance_assurance_comprise=True,
-    capital_echeance_pleine=capital_pleine or None,
     remboursements_constates=[] if remboursements is None else remboursements["Capital remboursé (€)"].tolist(),
     periodicite=periodicite,
     type_remboursement=type_remboursement,
@@ -535,6 +520,20 @@ if remboursements is not None and not remboursements.empty:
     if grand_livre_applique:
         params = replace(params, capital_impose=capital_constate(controle_initial, nature_initiale))
 
+# Capital de la 1re échéance pleine : pré-rempli avec la valeur calculée ; s'il est modifié, l'échéancier est
+# recalculé. Tant que l'utilisateur n'y touche pas, le champ suit les changements de paramètres.
+cle_pleine = cle("capital_pleine")
+pleine_calculee = calculer(params).echeance_pleine
+if pleine_calculee:
+    valeur_calculee = pleine_calculee[1]
+    precedente = st.session_state.get(cle_pleine + "_calcule")
+    saisie_pleine = st.session_state.get(cle_pleine)
+    if saisie_pleine is None or (precedente is not None and abs(saisie_pleine - precedente) < 0.005):
+        st.session_state[cle_pleine] = valeur_calculee
+    st.session_state[cle_pleine + "_calcule"] = valeur_calculee
+    if abs(st.session_state[cle_pleine] - valeur_calculee) >= 0.005:
+        params = replace(params, capital_echeance_pleine=st.session_state[cle_pleine])
+
 resultat = calculer(params)
 echeancier = resultat.echeancier
 
@@ -573,27 +572,47 @@ if rang < len(echeancier):
     reste = len(echeancier) - rang
     st.info(
         f"Capital soldé à l'échéance n°{rang} ({echeancier['Date'].iloc[rang - 1].strftime('%d/%m/%Y')}). "
-        f"Les {reste} échéance{'s' if reste > 1 else ''} suivante{'s' if reste > 1 else ''}, jusqu'au "
-        f"{echeancier['Date'].iloc[-1].strftime('%d/%m/%Y')}, restent dans l'échéancier à 0 € hors assurance et frais."
+        + (
+            f"Les {reste} échéances suivantes, jusqu'au {echeancier['Date'].iloc[-1].strftime('%d/%m/%Y')}, restent"
+            if reste > 1
+            else f"L'échéance suivante ({echeancier['Date'].iloc[-1].strftime('%d/%m/%Y')}) reste"
+        )
+        + " dans l'échéancier à 0 € hors assurance et frais."
     )
 
-if resultat.echeance_pleine:
+if resultat.echeance_pleine and pleine_calculee:
     jour_pleine, capital_pleine_obtenu, echeance_pleine = resultat.echeance_pleine
+    st.caption(
+        f"1re échéance pleine : {jour_pleine.strftime('%d/%m/%Y')} — capital remboursé {euros(capital_pleine_obtenu)}, "
+        f"échéance hors assurance {euros(echeance_pleine)}."
+    )
+    c1, c2 = st.columns([2, 1], vertical_alignment="bottom")
+    c1.number_input(
+        "Capital remboursé à cette échéance (€)",
+        key=cle_pleine,
+        min_value=0.0,
+        step=0.01,
+        format="%.2f",
+        help="Valeur calculée par l'application. Si le tableau de la banque ou le relevé indique un autre montant, "
+        "corrigez-le : l'échéance est recalculée pour retrouver ce capital, puis maintenue jusqu'au terme.",
+    )
     if params.capital_echeance_pleine:
-        message = (
-            f"Échéancier recalculé sur le capital saisi : la 1re échéance pleine ({jour_pleine.strftime('%d/%m/%Y')}) "
-            f"rembourse {euros(capital_pleine_obtenu)} de capital, pour une échéance hors assurance de "
-            f"{euros(echeance_pleine)}, maintenue ensuite."
+        c2.button(
+            "↺ Valeur calculée",
+            help=f"Revenir à la valeur calculée ({euros(pleine_calculee[1])})",
+            on_click=lambda: st.session_state.update({cle_pleine: st.session_state[cle_pleine + "_calcule"]}),
+            width="stretch",
         )
         if abs(capital_pleine_obtenu - params.capital_echeance_pleine) <= 0.005:
-            st.success("✅ " + message)
+            st.success(
+                f"✅ Échéancier recalculé sur le capital saisi : la 1re échéance pleine rembourse "
+                f"{euros(capital_pleine_obtenu)} de capital (calculé : {euros(pleine_calculee[1])}), pour une échéance "
+                f"hors assurance de {euros(echeance_pleine)}, maintenue ensuite."
+            )
         else:
-            st.warning(f"⚠️ {message} Le montant saisi ({euros(params.capital_echeance_pleine)}) dépasse le capital restant dû.")
+            st.warning(f"⚠️ Le montant saisi ({euros(params.capital_echeance_pleine)}) dépasse le capital restant dû.")
     else:
-        st.caption(
-            f"1re échéance pleine : {jour_pleine.strftime('%d/%m/%Y')} — capital remboursé {euros(capital_pleine_obtenu)}, "
-            f"échéance hors assurance {euros(echeance_pleine)}."
-        )
+        c2.caption("✔️ Valeur calculée retenue — modifiez-la si besoin.")
 
 amortissement = echeancier.iloc[params.nb_echeances_differe : -1]
 if ((amortissement["Amortissement (€)"] <= 0) & (amortissement["Solde (€)"] > 0.005)).any():

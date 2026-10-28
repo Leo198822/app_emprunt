@@ -11,9 +11,7 @@ L'écran se remplit en quelques étapes ; l'échéancier se génère dès que le
    (mensuelle, trimestrielle, semestrielle, annuelle), type de remboursement, nombre total
    d'échéances, dont échéances de différé, et — facultatif — le montant de l'échéance prélevée par la
    banque, **assurance comprise** (l'application en retire l'assurance saisie dans les Options).
-   Facultatif aussi : le **capital remboursé à la 1re échéance pleine** (1re échéance de remboursement
-   non proratisée, une fois tous les fonds versés) ; l'échéance est recalculée pour retrouver ce capital,
-   puis maintenue jusqu'au terme. Si un différé est saisi : intérêts ajoutés au capital ou prélevés.
+ Si un différé est saisi : intérêts ajoutés au capital ou prélevés.
    **Emprunt débloqué en totalité ou partiellement** : en partiel, l'échéancier porte sur le montant
    réellement débloqué, au choix
    - *échéance du prêt complet maintenue* : le capital est soldé plus tôt (ex. prêt de 10 000 € sur
@@ -43,7 +41,11 @@ L'écran se remplit en quelques étapes ; l'échéancier se génère dès que le
    à l'échéance qui suit sa date (Amortissement ; indemnités en Autres frais). Après un remboursement
    partiel : échéance maintenue (durée réduite) ou durée maintenue (échéance recalculée). Une fois le
    capital soldé par anticipation, l'échéancier s'arrête.
-4. **Ajustement (facultatif)** : sous l'échéancier, saisir une date et le capital restant dû connu à
+4. **1re échéance pleine** : sous l'échéancier, l'application indique la 1re échéance non proratisée (une
+   fois tous les fonds versés) et pré-remplit le capital qu'elle rembourse. Validez-le tel quel, ou
+   corrigez-le d'après le tableau de la banque : l'échéance est recalculée pour retrouver ce capital, puis
+   maintenue jusqu'au terme (« ↺ Valeur calculée » pour revenir au calcul).
+5. **Ajustement (facultatif)** : sous l'échéancier, saisir une date et le capital restant dû connu à
    cette date (tableau de la banque, relevé…). L'échéancier est recalculé pour retomber exactement
    dessus : l'application ajuste les intérêts ajoutés au capital pendant le différé ou, sans différé,
    l'échéance.
