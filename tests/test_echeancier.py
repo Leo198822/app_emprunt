@@ -20,6 +20,7 @@ from echeancier import (
     comparer,
     exporter_pennylane,
     fonds_insuffisants,
+    repartir_ecart,
     lire_grand_livre,
 )
 
@@ -593,3 +594,37 @@ def test_deblocage_trop_tardif_signale_au_lieu_d_un_solde_negatif():
     # Échéances proratisées : les remboursements suivent les fonds versés, la chronologie est cohérente.
     p = replace(p, echeance_proratisee=True)
     assert fonds_insuffisants(p, calculer_echeancier(p)) is None
+
+
+def test_repartition_des_interets_capitalises_jamais_negative():
+    # Long différé de petits montants : l'accumulation des arrondis ne doit pas rendre une ligne négative.
+    montants = repartir_ecart([0.10] * 58 + [0.98], 5.52)
+    assert min(montants) >= 0
+    assert round(sum(montants), 2) == 5.52
+
+
+def test_derniere_echeance_sans_interet_negatif():
+    # Échéance saisie très faible : l'ajustement d'arrondi de la dernière échéance ne crée pas d'intérêt négatif.
+    p = ParametresPret(
+        capital=1, taux=0.001, nb_echeances=2, nb_echeances_differe=1, date_premier_paiement=date(2022, 2, 1),
+        jour_prelevement=1, interets_differe_capitalises=False, periodicite="Trimestrielle", echeance_imposee=1,
+        echeance_assurance_comprise=True, assurance_taux_crd=5,
+    )
+    assert (calculer_echeancier(p)["Intérêt (€)"] >= 0).all()
+
+
+def test_correction_d_un_interet_du_differe_retenue_sans_negatif_ailleurs():
+    p = pret_banque(468.45)
+    jour = calculer_echeancier(p)["Date"].iloc[1]
+    e = calculer_echeancier(replace(p, corrections={jour: {"interet": 500.0}}))
+    assert e["Intérêt (€)"].iloc[1] == 500.0
+    assert (e["Intérêt (€)"] >= 0).all()
+
+
+def test_ajustement_sur_un_solde_nul_solde_le_pret_a_la_date_indiquee():
+    p = pret_simple()
+    ajustement = ajuster_sur_solde(p, date(2028, 1, 5), 0.0)
+    assert ajustement.possible and ajustement.solde_obtenu == 0
+    e = calculer_echeancier(ajustement.parametres)
+    # Capital soldé à la dernière échéance avant la date (10/12/2027), pas avant : échéance la plus faible.
+    assert e.loc[e["Date"] == date(2027, 11, 10), "Solde (€)"].iloc[0] > 0

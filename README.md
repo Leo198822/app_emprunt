@@ -28,7 +28,13 @@ L'écran se remplit en quelques étapes ; l'échéancier se génère dès que le
    - un capital remboursé qui dépasserait les fonds versés à une échéance (déblocage trop tardif par
      rapport au rythme de remboursement, ou modifications du tableau) : le message nomme l'échéance et
      les déblocages concernés.
-   Une erreur de calcul imprévue affiche un message en français au lieu du détail technique.
+   - des déblocages inférieurs au montant emprunté en mode « en totalité » (ajouter les déblocages
+     manquants, même à venir, ou choisir « partiellement ») ;
+   - une assurance supérieure ou égale à l'échéance saisie assurance comprise.
+   Une erreur de calcul imprévue affiche un message en français au lieu du détail technique. Sont aussi
+   signalés : une échéance saisie qui solde tout le prêt dès la 1re échéance, une échéance saisie non
+   utilisée (amortissement constant), une date d'ajustement postérieure à la fin du prêt. Dans le tableau
+   d'échéancier, les montants négatifs ou supérieurs au capital plus les intérêts du prêt sont refusés.
    **Déblocages après la 1re échéance de remboursement du capital** (plusieurs déblocages) : l'option
    n'apparaît que dans ce cas. Jusqu'au dernier déblocage, les échéances sont au choix
    - *proratisées* (**par défaut**) : réduites au prorata des fonds déjà versés, intérêts sur le capital

@@ -16,6 +16,7 @@ from echeancier import (
     calculer_echeancier,
     capital_constate,
     comparer,
+    dates_echeances,
     diagnostic_controle,
     exporter_pennylane,
     fonds_insuffisants,
@@ -85,7 +86,7 @@ def editer_lignes(
     selection = saisie["Sélection"].fillna(False).astype(bool)
     nb = int(selection.sum())
     with barre:
-        consignes, bouton = st.columns([3, 1], vertical_alignment="bottom")
+        consignes, bouton = st.columns([3, 1], vertical_alignment="top")  # loin de la barre d'outils du tableau
         consignes.caption(
             "✏️ **Corriger** : double-cliquez sur une cellule.  \n"
             "🗑️ **Supprimer** : cochez la ou les lignes (colonne ☑), puis cliquez sur « 🗑️ Supprimer ».  \n"
@@ -120,8 +121,9 @@ def lignes_incompletes(saisie: pd.DataFrame, colonne_montant: str, objet: str) -
                 "cellule et saisissez-la au format JJ/MM/AAAA (ou choisissez-la dans le calendrier)."
             )
         elif not 1990 <= pd.Timestamp(r["Date"]).year <= 2100:
+            jour = pd.Timestamp(r["Date"])
             erreurs.append(
-                f"Ligne n°{numero} ({objet}{montant}) : la date du {pd.Timestamp(r['Date']).strftime('%d/%m/%Y')} n'est "
+                f"Ligne n°{numero} ({objet}{montant}) : la date du {jour.day:02d}/{jour.month:02d}/{jour.year:04d} n'est "
                 "pas vraisemblable. Vérifiez l'année."
             )
         elif not montant_ok and colonne_montant == "Montant (€)" and objet == "déblocage":
@@ -380,7 +382,7 @@ if deblocages and premier_paiement:
 for erreur in erreurs_dates:
     st.error(f"⛔ {erreur}")
 
-depassement = None
+depassement = manque = None
 montant_verse = round(sum(d.montant for d in deblocages), 2) if deblocages else (montant_debloque or 0)
 if capital and montant_verse > capital + 0.005:
     depassement = round(montant_verse - capital, 2)
@@ -399,8 +401,13 @@ elif deblocages:
         st.success(f"{libelle} — égal au montant emprunté.")
         if partiel:
             st.warning("Les fonds sont débloqués en totalité : choisissez « en totalité » à l'étape 1.")
-    else:
-        st.warning(f"{libelle} — il manque {euros(capital - total)} pour atteindre le montant emprunté ({euros(capital)}).")
+    elif not erreurs_saisie:  # une ligne illisible est déjà signalée : pas de second message sur le total
+        manque = round(capital - total, 2)
+        st.error(
+            f"⛔ {libelle} : il manque {euros(manque)} pour atteindre le montant emprunté ({euros(capital)}). "
+            "Ajoutez les déblocages manquants (même à venir, à leur date prévue), corrigez le montant emprunté, ou "
+            "choisissez « partiellement » à l'étape 1 si une partie des fonds ne sera jamais versée."
+        )
 
 echeance_proratisee = False
 if len(deblocages) > 1 and premier_paiement and nb_echeances and type_remboursement == "Échéances constantes":
@@ -520,16 +527,20 @@ if source.startswith("Importer") and not deblocages:
         if grand_livre is not None
         else "le grand livre (ou choisissez une autre façon de renseigner les déblocages)"
     )
+if source.startswith("Saisir") and not deblocages and not erreurs_saisie:
+    manquants.append("au moins un déblocage (remplissez une ligne du tableau de l'étape 2)")
 if manquants:
     st.info("Pour générer l'échéancier, renseignez : " + ", ".join(manquants) + ".")
     st.stop()
 if erreurs_anticipes:
     st.error("⛔ Échéancier non généré : corrigez les remboursements anticipés (voir ci-dessus).")
     st.stop()
-if depassement or erreurs_dates:
+if depassement or manque or erreurs_dates:
     motif = (
         "les déblocages dépassent le montant emprunté"
         if depassement
+        else "les déblocages n'atteignent pas le montant emprunté"
+        if manque
         else "les dates des déblocages ne sont pas cohérentes avec celles des échéances"
     )
     st.error(f"⛔ Échéancier non généré : {motif} (voir l'étape 2).")
@@ -570,7 +581,13 @@ with st.expander("🎯 Ajuster sur un capital restant dû connu (facultatif)"):
     solde_reference = c2.number_input(
         "Capital restant dû à cette date (€)", key=cle("solde_reference"), min_value=0.0, value=None, step=0.01, format="%.2f", placeholder="ex. 21 859,20"
     )
-    if date_reference and solde_reference is not None:
+    derniere_date = dates_echeances(params)[-1]
+    if date_reference and date_reference > derniere_date:
+        st.error(
+            f"⛔ Ajustement impossible : la date saisie ({date_reference.strftime('%d/%m/%Y')}) est postérieure à la "
+            f"dernière échéance du prêt ({derniere_date.strftime('%d/%m/%Y')}). Vérifiez l'année."
+        )
+    elif date_reference and solde_reference is not None:
         ajustement = sans_plantage(ajuster_sur_solde, params, date_reference, solde_reference)
         if ajustement is None:
             st.error("⛔ Ajustement impossible : la date saisie est antérieure à la 1re échéance.")
@@ -617,6 +634,16 @@ corrections = st.session_state.setdefault(cle_corrections, {})
 if corrections:
     params = replace(params, corrections=corrections)
 
+if (
+    params.echeance_imposee and type_remboursement == "Échéances constantes"
+    and params.assurance_sur(params.capital_effectif) >= params.echeance_imposee
+):
+    st.error(
+        f"⛔ Échéancier non généré : l'assurance ({euros(params.assurance_sur(params.capital_effectif))} par échéance) "
+        f"est supérieure ou égale à l'échéance saisie assurance comprise ({euros(params.echeance_imposee)}). "
+        "Vérifiez le montant de l'échéance (étape 1) et celui de l'assurance (Options) : l'assurance se saisit par mois."
+    )
+    st.stop()
 resultat = sans_plantage(calculer, params)
 echeancier = resultat.echeancier
 if insuffisance := fonds_insuffisants(params, echeancier):
@@ -647,7 +674,9 @@ if insuffisance := fonds_insuffisants(params, echeancier):
 m1, m2, m3, m4 = st.columns(4)
 m1.metric(
     "Échéance (ass. comprise)" if params.assurance_mensuelle or params.assurance_taux_crd else "Échéance",
-    euros(echeancier["Échéance (€)"].iloc[params.nb_echeances_differe :].mode().iloc[0]),
+    # Échéance la plus fréquente, hors échéances à 0 (capital soldé avant le terme).
+    euros(echeances_payees.mode().iloc[0] if not (echeances_payees := echeancier["Échéance (€)"].iloc[
+        params.nb_echeances_differe :].loc[lambda x: x > 0]).empty else 0.0),
 )
 m2.metric(
     "Nombre d'échéances",
@@ -695,6 +724,16 @@ if ((amortissement["Amortissement (€)"] <= 0) & (amortissement["Solde (€)"] 
         "Vérifiez le montant de l'échéance saisi."
     )
 
+if echeance_banque and type_remboursement == "Amortissement constant":
+    st.caption(
+        f"L'échéance saisie ({euros(echeance_banque)}) n'est pas utilisée : en amortissement constant, le capital est "
+        "remboursé par parts égales et l'échéance diminue au fil des intérêts."
+    )
+elif echeance_banque and rang <= params.nb_echeances_differe + 1 < params.nb_echeances:
+    st.warning(
+        f"⚠️ L'échéance saisie ({euros(echeance_banque)}) rembourse tout le capital dès la 1re échéance : vérifiez "
+        "le montant (échéance d'une période, assurance comprise)."
+    )
 if params.echeance_imposee and resultat.echeance_constante and (params.assurance_mensuelle or params.assurance_taux_crd):
     st.caption(
         f"Échéance hors assurance déduite de l'échéance saisie ({euros(params.echeance_imposee)}) : "
@@ -807,23 +846,28 @@ st.data_editor(
     column_config={
         "Modifiée": st.column_config.CheckboxColumn("✏️", width=35, help="Ligne modifiée par vous"),
         "Date": st.column_config.DateColumn("Date", format="DD/MM/YYYY", width=90),
-        "Intérêt (€)": st.column_config.NumberColumn("Intérêt", format="%.2f", width=80),
-        "Assurance (€)": st.column_config.NumberColumn("Assurance", format="%.2f", width=85),
-        "Autres frais (€)": st.column_config.NumberColumn("Frais", format="%.2f", width=70),
-        "Amortissement (€)": st.column_config.NumberColumn("Capital", format="%.2f", width=90, help="Amortissement"),
-        "Échéance (€)": st.column_config.NumberColumn("Échéance", format="%.2f", width=90),
+        "Intérêt (€)": st.column_config.NumberColumn("Intérêt", min_value=0.0, format="%.2f", width=80),
+        "Assurance (€)": st.column_config.NumberColumn("Assurance", min_value=0.0, format="%.2f", width=85),
+        "Autres frais (€)": st.column_config.NumberColumn("Frais", min_value=0.0, format="%.2f", width=70),
+        "Amortissement (€)": st.column_config.NumberColumn("Capital", min_value=0.0, format="%.2f", width=90, help="Amortissement"),
+        "Échéance (€)": st.column_config.NumberColumn("Échéance", min_value=0.0, format="%.2f", width=90),
         "Solde (€)": st.column_config.NumberColumn("Solde", format="%.2f", width=95),
     },
 )
 modifications = st.session_state.get(cle_tableau, {}).get("edited_rows", {})
 if modifications:
-    ignorees = 0
+    ignorees, refusees = 0, []
+    # Montant saisi invraisemblable (négatif, ou supérieur au capital et aux intérêts de tout le prêt) : refusé.
+    plafond_saisie = round(params.capital + resultat.interets_capitalises_retenus + echeancier["Intérêt (€)"].sum(), 2)
     for ligne, valeurs in modifications.items():
         actuelle = echeancier.iloc[int(ligne)]
         jour = actuelle["Date"]
         correction = dict(corrections.get(jour, {}))
         dans_differe = int(ligne) < params.nb_echeances_differe
         for colonne, valeur in valeurs.items():
+            if valeur is not None and not 0 <= float(valeur) <= plafond_saisie:
+                refusees.append(f"{euros(float(valeur))} le {jour.strftime('%d/%m/%Y')}")
+                continue
             if colonne == "Échéance (€)":
                 if dans_differe or valeur is None:
                     ignorees += 1
@@ -847,10 +891,17 @@ if modifications:
             corrections[jour] = correction
         else:
             corrections.pop(jour, None)
+    messages = []
     if ignorees:
-        st.session_state[cle_corrections + "_message"] = (
-            "Pendant le différé, seuls les intérêts, l'assurance et les frais sont modifiables."
+        messages.append("Pendant le différé, seuls les intérêts, l'assurance et les frais sont modifiables.")
+    if refusees:
+        messages.append(
+            f"Montant{'s' if len(refusees) > 1 else ''} refusé{'s' if len(refusees) > 1 else ''} "
+            f"({', '.join(refusees)}) : un montant doit être compris entre 0 € et {euros(plafond_saisie)} "
+            "(capital emprunté plus intérêts du prêt)."
         )
+    if messages:
+        st.session_state[cle_corrections + "_message"] = " ".join(messages)
     st.session_state[cle_corrections + "_version"] = version_tableau + 1
     st.rerun()
 

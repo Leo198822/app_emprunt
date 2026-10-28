@@ -18,6 +18,7 @@ Principe (constaté sur le grand livre d'un prêt Crédit Agricole à déblocage
 from __future__ import annotations
 
 import calendar
+import math
 from dataclasses import dataclass, field, replace
 from datetime import date
 from io import BytesIO
@@ -201,12 +202,16 @@ def plafond_interets_capitalises(p: ParametresPret) -> float:
 
 
 def repartir_ecart(montants: list[float], total: float) -> list[float]:
-    """Ajuste des montants au prorata pour atteindre un total ; la dernière ligne absorbe l'arrondi."""
+    """Ajuste des montants au prorata pour atteindre un total, au centime près : les centimes d'arrondi vont
+    aux plus forts restes, si bien qu'aucune ligne ne devient négative (même sur un long différé)."""
     somme = sum(montants)
     if not montants or somme == 0:
         return repartir(total, len(montants))
-    ajustes = [round(m * total / somme, 2) for m in montants[:-1]]
-    return ajustes + [round(total - sum(ajustes), 2)]
+    exacts = [m * round(total * 100) / somme for m in montants]  # en centimes
+    centimes = [math.floor(x) for x in exacts]
+    for k in sorted(range(len(exacts)), key=lambda k: centimes[k] - exacts[k])[: round(total * 100) - sum(centimes)]:
+        centimes[k] += 1
+    return [c / 100 for c in centimes]
 
 
 def facteurs_interets(p: ParametresPret, dates: list[date]) -> list[float]:
@@ -285,7 +290,7 @@ def tableau_constant(
         interet = anticipes.interet(k, round(restant * facteur, 2))
         if k == n - 1:
             a = restant
-            if abs(round(echeance - a, 2) - interet) <= 0.02:
+            if abs(round(echeance - a, 2) - interet) <= 0.02 and round(echeance - a, 2) >= 0:
                 interet = round(echeance - a, 2)
         else:
             a = min(max(round(echeance - interet, 2), 0.0), restant)
@@ -391,7 +396,8 @@ def calculer(p: ParametresPret) -> Resultat:
 
     # Le capital à rembourser ne peut dépasser le capital versé que des intérêts réellement capitalisés.
     plafond = plafond_interets_capitalises(p)
-    capitalises = min(calcules, plafond)
+    # Intérêts du différé corrigés par l'utilisateur : retenus tels quels (le plafond ne s'applique qu'au calcul).
+    capitalises = calcules if differe_corrige else min(calcules, plafond)
     if p.interets_differe_capitalises and p.interets_capitalises_imposes is not None:
         capitalises = min(max(round(p.interets_capitalises_imposes, 2), 0.0), plafond)
     base = round(p.capital_effectif + capitalises, 2)
@@ -585,9 +591,10 @@ def ajuster_sur_solde(p: ParametresPret, jour: date, solde_cible: float, toleran
         extremes += [s_bas, s_haut]
         if not min(s_bas, s_haut) - tolerance <= solde_cible <= max(s_bas, s_haut) + tolerance:
             continue  # solde hors d'atteinte avec ce levier
-        while bas < haut:
-            milieu = (bas + haut) // 2
-            if (solde(milieu) >= solde_cible) == croissant:
+        while bas < haut:  # plus petite valeur du levier qui atteint le solde visé (ex. solde nul : l'échéance
+            milieu = (bas + haut) // 2  # la plus faible qui solde le prêt à cette date, pas avant)
+            atteint = solde(milieu) >= solde_cible if croissant else solde(milieu) <= solde_cible
+            if atteint:
                 haut = milieu
             else:
                 bas = milieu + 1
