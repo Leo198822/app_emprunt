@@ -510,6 +510,27 @@ def test_appliquer_le_grand_livre_en_echeances_proratisees():
     assert e["Solde (€)"].iloc[-1] == pytest.approx(0) and e["Amortissement (€)"].sum() == pytest.approx(24_000)
 
 
+def test_capital_saisi_a_la_premiere_echeance_pleine():
+    # Prêt n°141 proratisé : 1re échéance pleine le 05/08/2026 (fonds de juin compris dans l'échéance de juillet).
+    p = replace(pret_banque(468.45), interets_capitalises_imposes=185.76, echeance_proratisee=True)
+    assert calculer(p).echeance_pleine[0] == date(2026, 8, 5)
+    r = calculer(replace(p, capital_echeance_pleine=400))
+    e = r.echeancier
+    assert r.echeance_pleine == (date(2026, 8, 5), 400.0, 479.0)
+    assert set(e["Échéance (€)"].iloc[7:-3]) == {479.0}  # échéance maintenue ensuite
+    assert e["Amortissement (€)"].sum() == pytest.approx(24_000)
+    assert e["Solde (€)"].iloc[-1] == pytest.approx(0)
+
+
+def test_capital_saisi_sans_deblocage_tardif_et_amortissement_constant():
+    r = calculer(pret_10000(capital_echeance_pleine=420))
+    assert r.echeance_pleine == (date(2026, 1, 10), 420.0, 453.33)
+    assert r.echeancier["Amortissement (€)"].sum() == pytest.approx(10_000)
+    r = calculer(pret_10000(type_remboursement="Amortissement constant", capital_echeance_pleine=500))
+    assert r.echeancier["Amortissement (€)"].iloc[:5].tolist() == [500.0] * 5
+    assert r.echeancier["Amortissement (€)"].sum() == pytest.approx(10_000)
+
+
 def test_export_respecte_le_fichier_type(tmp_path):
     p = pret_banque()
     fichier = tmp_path / "export.xlsx"

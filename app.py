@@ -160,6 +160,20 @@ nb_differe = c2.number_input(
     help="Premières échéances sans remboursement de capital, pendant le déblocage des fonds.",
 )
 
+c1, _ = st.columns(2)
+capital_pleine = c1.number_input(
+    "Capital remboursé à la 1re échéance pleine (€)",
+    key=cle("capital_pleine"),
+    min_value=0.0,
+    value=None,
+    step=0.01,
+    format="%.2f",
+    placeholder="facultatif — ex. 391,41",
+    help="Part de capital (hors intérêts et assurance) de la 1re échéance non proratisée, c'est-à-dire la 1re "
+    "échéance de remboursement une fois tous les fonds versés, lue sur le tableau de la banque ou un relevé. "
+    "L'échéance est recalculée pour retrouver ce montant, puis maintenue jusqu'au terme.",
+)
+
 interets_capitalises = True
 if nb_differe:
     interets_capitalises = st.radio(
@@ -455,6 +469,7 @@ params = ParametresPret(
     interets_differe_capitalises=interets_capitalises,
     echeance_imposee=echeance_banque or None,
     echeance_assurance_comprise=True,
+    capital_echeance_pleine=capital_pleine or None,
     remboursements_constates=[] if remboursements is None else remboursements["Capital remboursé (€)"].tolist(),
     periodicite=periodicite,
     type_remboursement=type_remboursement,
@@ -561,6 +576,24 @@ if rang < len(echeancier):
         f"Les {reste} échéance{'s' if reste > 1 else ''} suivante{'s' if reste > 1 else ''}, jusqu'au "
         f"{echeancier['Date'].iloc[-1].strftime('%d/%m/%Y')}, restent dans l'échéancier à 0 € hors assurance et frais."
     )
+
+if resultat.echeance_pleine:
+    jour_pleine, capital_pleine_obtenu, echeance_pleine = resultat.echeance_pleine
+    if params.capital_echeance_pleine:
+        message = (
+            f"Échéancier recalculé sur le capital saisi : la 1re échéance pleine ({jour_pleine.strftime('%d/%m/%Y')}) "
+            f"rembourse {euros(capital_pleine_obtenu)} de capital, pour une échéance hors assurance de "
+            f"{euros(echeance_pleine)}, maintenue ensuite."
+        )
+        if abs(capital_pleine_obtenu - params.capital_echeance_pleine) <= 0.005:
+            st.success("✅ " + message)
+        else:
+            st.warning(f"⚠️ {message} Le montant saisi ({euros(params.capital_echeance_pleine)}) dépasse le capital restant dû.")
+    else:
+        st.caption(
+            f"1re échéance pleine : {jour_pleine.strftime('%d/%m/%Y')} — capital remboursé {euros(capital_pleine_obtenu)}, "
+            f"échéance hors assurance {euros(echeance_pleine)}."
+        )
 
 amortissement = echeancier.iloc[params.nb_echeances_differe : -1]
 if ((amortissement["Amortissement (€)"] <= 0) & (amortissement["Solde (€)"] > 0.005)).any():

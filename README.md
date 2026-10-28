@@ -10,7 +10,10 @@ L'écran se remplit en quelques étapes ; l'échéancier se génère dès que le
 1. **Le prêt** (offre de prêt) : montant emprunté, taux, date de la 1re échéance, **périodicité**
    (mensuelle, trimestrielle, semestrielle, annuelle), type de remboursement, nombre total
    d'échéances, dont échéances de différé, et — facultatif — le montant de l'échéance prélevée par la
-   banque, **assurance comprise** (l'application en retire l'assurance saisie dans les Options). Si un différé est saisi : intérêts ajoutés au capital ou prélevés.
+   banque, **assurance comprise** (l'application en retire l'assurance saisie dans les Options).
+   Facultatif aussi : le **capital remboursé à la 1re échéance pleine** (1re échéance de remboursement
+   non proratisée, une fois tous les fonds versés) ; l'échéance est recalculée pour retrouver ce capital,
+   puis maintenue jusqu'au terme. Si un différé est saisi : intérêts ajoutés au capital ou prélevés.
    **Emprunt débloqué en totalité ou partiellement** : en partiel, l'échéancier porte sur le montant
    réellement débloqué, au choix
    - *échéance du prêt complet maintenue* : le capital est soldé plus tôt (ex. prêt de 10 000 € sur
