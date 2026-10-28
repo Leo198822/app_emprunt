@@ -593,51 +593,46 @@ if params.nb_echeances_differe and interets_capitalises:
     )
 
 st.subheader("Contrôler l'échéancier avant téléchargement")
-st.warning(
-    "🔎 **Vérifiez l'échéancier avant de le télécharger** en le comparant au tableau d'amortissement de la banque "
-    "(intérêts, capital, échéance, capital restant dû). Pour le corriger : **soit en appliquant les montants du "
-    "grand livre** (①), **soit en modifiant directement l'échéancier ci-dessous** (②)."
-)
+st.caption("Comparez l'échéancier au tableau d'amortissement de la banque et corrigez-le si besoin, en deux temps.")
 
-st.markdown("##### ① Appliquer les montants du grand livre")
+# 1. Grand livre ------------------------------------------------------------------------------------------
+st.markdown("##### 1. Appliquez les montants du grand livre")
+ecarts_restants = None  # None : pas de grand livre ; True / False : écarts avec le grand livre après l'étape 1
 if controle_initial is None:
     st.caption(
-        "Disponible si vous importez le grand livre du compte d'emprunt à l'étape 2 : le capital remboursé "
-        "comptabilisé est alors comparé à l'échéancier, et peut lui être appliqué."
+        "Aucun grand livre importé : importez celui du compte d'emprunt à l'étape 2 pour comparer le capital "
+        "remboursé en comptabilité à l'échéancier et l'appliquer. Sinon, passez directement à l'étape 2 ci-dessous."
     )
 else:
-    controle, nature, n = controle_initial, nature_initiale, len(controle_initial)
+    nature, n = nature_initiale, len(controle_initial)
     hors = f" (hors {nature.replace('capital + ', '')})" if nature and nature not in ("capital", "échéance complète") else ""
-    if grand_livre_applique:
-        st.success(
-            f"✅ Échéancier régénéré avec les montants du grand livre : le capital des {len(params.capital_impose)} "
-            f"échéance(s) comptabilisée(s) est repris du compte 164{hors}, et les échéances suivantes sont recalculées "
-            "pour solder le prêt au terme. Désactivez l'interrupteur pour revenir au calcul théorique."
-        )
-        controle = comparer(echeancier, remboursements)
-    elif nature == "capital":
-        st.success(f"✅ Les {n} remboursements de capital du grand livre sont retrouvés au centime.")
-    elif nature:
-        st.info(
-            f"ℹ️ Les {n} remboursements du compte 164 correspondent au centime à **{nature}** de l'échéancier, "
-            "et non au seul capital : dans la comptabilité, l'échéance a été passée en totalité au compte d'emprunt. "
-            "L'échéancier est correct ; c'est l'écriture comptable qui mélange capital et "
-            + ("assurance/frais" if "frais" in nature else "assurance" if "assurance" in nature else "intérêts, assurance et frais")
-            + " (à reclasser le cas échéant)."
-        )
+    if nature == "capital":
+        st.success(f"✅ Les {n} remboursements de capital du grand livre correspondent déjà à l'échéancier : rien à appliquer.")
     else:
-        st.warning(
-            "⚠️ Le capital remboursé en comptabilité diffère de l'échéancier : vérifiez l'échéance et le différé, "
-            "ou appliquez les montants du grand livre ci-dessous."
-        )
-    if nature != "capital":
+        if grand_livre_applique:
+            pass  # le message de réussite, sous l'interrupteur, suffit
+        elif nature:
+            st.info(
+                f"ℹ️ Les {n} remboursements du compte 164 correspondent à **{nature}** de l'échéancier : "
+                "l'échéance a été passée en totalité au compte d'emprunt. Seul le capital sera repris."
+            )
+        else:
+            st.warning(f"⚠️ Le capital remboursé en comptabilité ({n} échéances) diffère de l'échéancier.")
         st.toggle(
-            "Appliquer les montants du grand livre à l'échéancier",
+            f"Appliquer les montants du grand livre à l'échéancier{hors}",
             key=cle_appliquer,
-            help=f"Reprend le capital remboursé comptabilisé au compte 164 pour chaque échéance concernée{hors} ; "
-            "les échéances suivantes sont recalculées sur le capital restant dû pour finir au terme.",
+            help="Reprend le capital remboursé comptabilisé au compte 164 pour chaque échéance concernée ; "
+            "les échéances suivantes sont recalculées sur le capital restant dû pour finir au terme. "
+            "Désactivez pour revenir au calcul théorique.",
         )
-    with st.expander("Détail du contrôle : grand livre / échéancier"):
+        if grand_livre_applique:
+            st.success(
+                f"✅ Montants du grand livre appliqués : le capital des {len(params.capital_impose)} échéance(s) "
+                "comptabilisée(s) est repris, et les échéances suivantes sont recalculées pour solder le prêt au terme."
+            )
+    controle = comparer(echeancier, remboursements)
+    ecarts_restants = diagnostic_controle(controle) != "capital"
+    with st.expander("Détail : grand livre / échéancier"):
         st.dataframe(
             tableau_euros(controle[["Date", "Capital remboursé (€)", "Amortissement (€)", "Écart (€)"]].rename(
                 columns={"Capital remboursé (€)": "Débit compte 164 (€)", "Amortissement (€)": "Capital échéancier (€)"}
@@ -646,24 +641,33 @@ else:
             width="stretch",
         )
 
+# 2. Modification directe ---------------------------------------------------------------------------------
 COLONNES_MODIFIABLES = {
     "Intérêt (€)": "interet",
     "Assurance (€)": "assurance",
     "Autres frais (€)": "frais",
     "Amortissement (€)": "amortissement",
 }
-st.markdown("##### ② Modifier directement l'échéancier")
+st.markdown("##### 2. S'il reste des écarts, modifiez directement l'échéancier")
+if ecarts_restants:
+    st.warning(
+        "⚠️ Il reste des écarts avec le grand livre (voir le détail ci-dessus) : corrigez-les directement dans le "
+        "tableau ci-dessous."
+    )
+elif ecarts_restants is False:
+    st.caption(
+        "L'échéancier correspond au grand livre. S'il reste des écarts avec le tableau de la banque "
+        "(intérêts, échéance, capital restant dû), corrigez-les directement dans le tableau ci-dessous."
+    )
 st.info(
     "✏️ Double-cliquez sur un **intérêt**, une **assurance**, des **frais**, un **capital** ou une **échéance**, "
-    "saisissez le bon montant puis appuyez sur Entrée.  \n"
-    "🔄 L'échéancier est recalculé aussitôt : les échéances suivantes sont ajustées pour solder le prêt au terme "
-    "(un intérêt modifié conserve l'échéance ; une échéance modifiée fixe le capital)."
+    "saisissez le bon montant puis appuyez sur Entrée. L'échéancier est recalculé aussitôt : les échéances "
+    "suivantes sont ajustées pour solder le prêt au terme (un intérêt modifié conserve l'échéance ; une échéance "
+    "modifiée fixe le capital)."
 )
 consignes, bouton_annuler = st.columns([3, 1], vertical_alignment="center")
-consignes.caption(
-    f"✏️ {len(corrections)} ligne(s) modifiée(s), repérée(s) dans la 1re colonne." if corrections
-    else "Colonnes modifiables : Intérêt, Assurance, Frais, Capital, Échéance (en-têtes marqués d'un crayon)."
-)
+if corrections:
+    consignes.caption(f"✏️ {len(corrections)} ligne(s) modifiée(s), repérée(s) dans la 1re colonne.")
 if corrections:
     bouton_annuler.button(
         f"↺ Annuler ({len(corrections)})",
