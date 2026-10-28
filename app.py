@@ -520,19 +520,11 @@ if remboursements is not None and not remboursements.empty:
     if grand_livre_applique:
         params = replace(params, capital_impose=capital_constate(controle_initial, nature_initiale))
 
-# Capital de la 1re échéance pleine : pré-rempli avec la valeur calculée ; s'il est modifié, l'échéancier est
-# recalculé. Tant que l'utilisateur n'y touche pas, le champ suit les changements de paramètres.
-cle_pleine = cle("capital_pleine")
-pleine_calculee = calculer(params).echeance_pleine
-if pleine_calculee:
-    valeur_calculee = pleine_calculee[1]
-    precedente = st.session_state.get(cle_pleine + "_calcule")
-    saisie_pleine = st.session_state.get(cle_pleine)
-    if saisie_pleine is None or (precedente is not None and abs(saisie_pleine - precedente) < 0.005):
-        st.session_state[cle_pleine] = valeur_calculee
-    st.session_state[cle_pleine + "_calcule"] = valeur_calculee
-    if abs(st.session_state[cle_pleine] - valeur_calculee) >= 0.005:
-        params = replace(params, capital_echeance_pleine=st.session_state[cle_pleine])
+# Modifications faites par l'utilisateur directement dans le tableau d'échéancier (par date d'échéance).
+cle_corrections = cle("corrections")
+corrections = st.session_state.setdefault(cle_corrections, {})
+if corrections:
+    params = replace(params, corrections=corrections)
 
 resultat = calculer(params)
 echeancier = resultat.echeancier
@@ -579,40 +571,6 @@ if rang < len(echeancier):
         )
         + " dans l'échéancier à 0 € hors assurance et frais."
     )
-
-if resultat.echeance_pleine and pleine_calculee:
-    jour_pleine, capital_pleine_obtenu, echeance_pleine = resultat.echeance_pleine
-    st.caption(
-        f"1re échéance pleine : {jour_pleine.strftime('%d/%m/%Y')} — capital remboursé {euros(capital_pleine_obtenu)}, "
-        f"échéance hors assurance {euros(echeance_pleine)}."
-    )
-    c1, c2 = st.columns([2, 1], vertical_alignment="bottom")
-    c1.number_input(
-        "Capital remboursé à cette échéance (€)",
-        key=cle_pleine,
-        min_value=0.0,
-        step=0.01,
-        format="%.2f",
-        help="Valeur calculée par l'application. Si le tableau de la banque ou le relevé indique un autre montant, "
-        "corrigez-le : l'échéance est recalculée pour retrouver ce capital, puis maintenue jusqu'au terme.",
-    )
-    if params.capital_echeance_pleine:
-        c2.button(
-            "↺ Valeur calculée",
-            help=f"Revenir à la valeur calculée ({euros(pleine_calculee[1])})",
-            on_click=lambda: st.session_state.update({cle_pleine: st.session_state[cle_pleine + "_calcule"]}),
-            width="stretch",
-        )
-        if abs(capital_pleine_obtenu - params.capital_echeance_pleine) <= 0.005:
-            st.success(
-                f"✅ Échéancier recalculé sur le capital saisi : la 1re échéance pleine rembourse "
-                f"{euros(capital_pleine_obtenu)} de capital (calculé : {euros(pleine_calculee[1])}), pour une échéance "
-                f"hors assurance de {euros(echeance_pleine)}, maintenue ensuite."
-            )
-        else:
-            st.warning(f"⚠️ Le montant saisi ({euros(params.capital_echeance_pleine)}) dépasse le capital restant dû.")
-    else:
-        c2.caption("✔️ Valeur calculée retenue — modifiez-la si besoin.")
 
 amortissement = echeancier.iloc[params.nb_echeances_differe : -1]
 if ((amortissement["Amortissement (€)"] <= 0) & (amortissement["Solde (€)"] > 0.005)).any():
@@ -685,4 +643,86 @@ st.download_button(
     type="primary",
     width="stretch",
 )
-st.dataframe(tableau_euros(echeancier), width="stretch", hide_index=True, height=420)
+COLONNES_MODIFIABLES = {
+    "Intérêt (€)": "interet",
+    "Assurance (€)": "assurance",
+    "Autres frais (€)": "frais",
+    "Amortissement (€)": "amortissement",
+}
+consignes, bouton_annuler = st.columns([3, 1], vertical_alignment="bottom")
+consignes.caption(
+    "✏️ **Modifier** : double-cliquez sur un intérêt, une assurance, des frais, un capital (amortissement) ou une échéance, "
+    "saisissez le montant puis Entrée. L'échéancier est recalculé aussitôt : les échéances suivantes sont "
+    "ajustées pour solder le prêt au terme. Modifier un intérêt conserve l'échéance (le capital s'ajuste) ; "
+    "modifier une échéance en déduit le capital."
+)
+if corrections:
+    bouton_annuler.button(
+        f"↺ Annuler ({len(corrections)})",
+        help=f"Annule vos {len(corrections)} modification(s) du tableau et revient à l'échéancier calculé.",
+        on_click=lambda: st.session_state.update({cle_corrections: {}}),
+        width="stretch",
+    )
+if message_tableau := st.session_state.pop(cle_corrections + "_message", None):
+    st.warning(f"⚠️ {message_tableau}")
+version_tableau = st.session_state.setdefault(cle_corrections + "_version", 0)
+cle_tableau = f"{cle_corrections}_tableau_{version_tableau}"
+affiche = echeancier.assign(Modifiée=[d in corrections for d in echeancier["Date"]])
+st.data_editor(
+    affiche,
+    key=cle_tableau,
+    width="stretch",
+    hide_index=True,
+    height=420,
+    num_rows="fixed",
+    column_order=["Modifiée", "Date", *COLONNES_MODIFIABLES, "Échéance (€)", "Solde (€)"],
+    disabled=["Modifiée", "Date", "Solde (€)"],
+    column_config={
+        "Modifiée": st.column_config.CheckboxColumn("✏️", width=35, help="Ligne modifiée par vous"),
+        "Date": st.column_config.DateColumn("Date", format="DD/MM/YYYY", width=90),
+        "Intérêt (€)": st.column_config.NumberColumn("Intérêt", format="%.2f", width=80),
+        "Assurance (€)": st.column_config.NumberColumn("Assurance", format="%.2f", width=85),
+        "Autres frais (€)": st.column_config.NumberColumn("Frais", format="%.2f", width=70),
+        "Amortissement (€)": st.column_config.NumberColumn("Capital", format="%.2f", width=90, help="Amortissement"),
+        "Échéance (€)": st.column_config.NumberColumn("Échéance", format="%.2f", width=90),
+        "Solde (€)": st.column_config.NumberColumn("Solde", format="%.2f", width=95),
+    },
+)
+modifications = st.session_state.get(cle_tableau, {}).get("edited_rows", {})
+if modifications:
+    ignorees = 0
+    for ligne, valeurs in modifications.items():
+        actuelle = echeancier.iloc[int(ligne)]
+        jour = actuelle["Date"]
+        correction = dict(corrections.get(jour, {}))
+        dans_differe = int(ligne) < params.nb_echeances_differe
+        for colonne, valeur in valeurs.items():
+            if colonne == "Échéance (€)":
+                if dans_differe or valeur is None:
+                    ignorees += 1
+                    continue
+                # Échéance saisie : conservée telle quelle ; le capital en est déduit au calcul (échéance
+                # moins intérêts, assurance et frais de la ligne).
+                frais_ligne = sum(float(valeurs.get(c, actuelle[c])) for c in ("Assurance (€)", "Autres frais (€)"))
+                correction["echeance"] = round(float(valeur) - frais_ligne, 2)
+                correction.pop("amortissement", None)
+            elif colonne in COLONNES_MODIFIABLES:
+                if colonne == "Amortissement (€)" and dans_differe:
+                    ignorees += 1
+                    continue
+                if valeur is None:
+                    correction.pop(COLONNES_MODIFIABLES[colonne], None)
+                else:
+                    correction[COLONNES_MODIFIABLES[colonne]] = round(float(valeur), 2)
+                if colonne == "Amortissement (€)":
+                    correction.pop("echeance", None)  # le dernier montant saisi l'emporte
+        if correction:
+            corrections[jour] = correction
+        else:
+            corrections.pop(jour, None)
+    if ignorees:
+        st.session_state[cle_corrections + "_message"] = (
+            "Pendant le différé, seuls les intérêts, l'assurance et les frais sont modifiables."
+        )
+    st.session_state[cle_corrections + "_version"] = version_tableau + 1
+    st.rerun()

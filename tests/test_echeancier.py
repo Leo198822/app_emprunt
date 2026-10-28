@@ -510,25 +510,48 @@ def test_appliquer_le_grand_livre_en_echeances_proratisees():
     assert e["Solde (€)"].iloc[-1] == pytest.approx(0) and e["Amortissement (€)"].sum() == pytest.approx(24_000)
 
 
-def test_capital_saisi_a_la_premiere_echeance_pleine():
-    # Prêt n°141 proratisé : 1re échéance pleine le 05/08/2026 (fonds de juin compris dans l'échéance de juillet).
-    p = replace(pret_banque(468.45), interets_capitalises_imposes=185.76, echeance_proratisee=True)
-    assert calculer(p).echeance_pleine[0] == date(2026, 8, 5)
-    r = calculer(replace(p, capital_echeance_pleine=400))
+def test_modifier_le_capital_d_une_echeance():
+    e = calculer_echeancier(pret_10000(corrections={date(2026, 3, 10): {"amortissement": 500}}))
+    assert e["Amortissement (€)"].iloc[2] == 500
+    assert len(set(e["Échéance (€)"].iloc[3:-1])) == 1  # échéances suivantes recalculées…
+    assert e["Échéance (€)"].iloc[3] < 434.25
+    assert len(e) == 24 and e["Solde (€)"].iloc[-1] == 0  # … pour solder le prêt au terme
+    assert e["Amortissement (€)"].sum() == pytest.approx(10_000)
+
+
+def test_modifier_un_interet_conserve_l_echeance():
+    e = calculer_echeancier(pret_10000(corrections={date(2026, 5, 10): {"interet": 40}}))
+    assert e["Intérêt (€)"].iloc[4] == 40 and e["Échéance (€)"].iloc[4] == pytest.approx(434.25)
+    assert e["Amortissement (€)"].sum() == pytest.approx(10_000) and e["Solde (€)"].iloc[-1] == 0
+
+
+def test_modifier_l_echeance_et_plusieurs_lignes():
+    corrections = {
+        date(2026, 3, 10): {"amortissement": 500},
+        date(2026, 5, 10): {"interet": 40},
+        date(2026, 8, 10): {"echeance": 600},
+    }
+    e = calculer_echeancier(pret_10000(assurance_mensuelle=5, corrections=corrections))
+    assert e["Échéance (€)"].iloc[7] == pytest.approx(605)  # 600 € + 5 € d'assurance, exactement
+    assert e["Amortissement (€)"].iloc[2] == 500 and e["Intérêt (€)"].iloc[4] == 40
+    assert e["Amortissement (€)"].sum() == pytest.approx(10_000) and e["Solde (€)"].iloc[-1] == 0
+
+
+def test_modifier_assurance_frais_et_interet_du_differe():
+    p = replace(pret_banque(468.45), interets_capitalises_imposes=None, remboursements_constates=[])
+    jour = date(2026, 2, 5)  # échéance de différé
+    e0 = calculer(p)
+    r = calculer(replace(p, corrections={jour: {"interet": 100, "assurance": 7, "frais": 2}}))
     e = r.echeancier
-    assert r.echeance_pleine == (date(2026, 8, 5), 400.0, 479.0)
-    assert set(e["Échéance (€)"].iloc[7:-3]) == {479.0}  # échéance maintenue ensuite
-    assert e["Amortissement (€)"].sum() == pytest.approx(24_000)
+    assert e["Intérêt (€)"].iloc[1] == 100 and e["Assurance (€)"].iloc[1] == 7 and e["Autres frais (€)"].iloc[1] == 2
+    # L'intérêt corrigé du différé s'ajoute au capital (dans la limite vraisemblable).
+    assert r.interets_capitalises_calcules > e0.interets_capitalises_calcules
     assert e["Solde (€)"].iloc[-1] == pytest.approx(0)
 
 
-def test_capital_saisi_sans_deblocage_tardif_et_amortissement_constant():
-    r = calculer(pret_10000(capital_echeance_pleine=420))
-    assert r.echeance_pleine == (date(2026, 1, 10), 420.0, 453.33)
-    assert r.echeancier["Amortissement (€)"].sum() == pytest.approx(10_000)
-    r = calculer(pret_10000(type_remboursement="Amortissement constant", capital_echeance_pleine=500))
-    assert r.echeancier["Amortissement (€)"].iloc[:5].tolist() == [500.0] * 5
-    assert r.echeancier["Amortissement (€)"].sum() == pytest.approx(10_000)
+def test_la_derniere_echeance_solde_toujours_le_capital():
+    e = calculer_echeancier(pret_10000(corrections={date(2027, 12, 10): {"amortissement": 1}}))
+    assert e["Solde (€)"].iloc[-1] == 0 and e["Amortissement (€)"].sum() == pytest.approx(10_000)
 
 
 def test_export_respecte_le_fichier_type(tmp_path):

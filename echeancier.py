@@ -70,8 +70,9 @@ class ParametresPret:
     autres_frais: float = 0.0
     autres_frais_en_pourcentage: bool = False  # True : % du capital ; False : montant total
     remboursements_anticipes: list[RemboursementAnticipe] = field(default_factory=list)
-    capital_echeance_pleine: float | None = None  # capital remboursé à la 1re échéance pleine (non proratisée) :
-    # l'échéance est recalculée pour le retrouver, puis maintenue jusqu'au terme
+    corrections: dict[date, dict[str, float]] = field(default_factory=dict)  # modifications de l'utilisateur,
+    # par date d'échéance : « interet », « assurance », « frais », « amortissement » ; après la dernière
+    # correction de capital, l'échéance est recalculée pour finir au terme
     capital_impose: dict[str, float] = field(default_factory=dict)  # « AAAA-MM » → capital remboursé constaté
     # (grand livre) ; après le dernier, l'échéance est recalculée pour finir au terme
     anticipe_reduit_duree: bool = True  # après un remboursement partiel : True = durée réduite (échéance
@@ -138,7 +139,6 @@ class Resultat:
     echeance_constante: float | None
     rang_capital_solde: int  # rang de l'échéance qui solde le capital (= nombre d'échéances sans fin anticipée)
     anticipes: list[tuple[date, float, float]] = field(default_factory=list)  # (échéance, capital, indemnités)
-    echeance_pleine: tuple[date, float, float] | None = None  # 1re échéance pleine : (date, capital, échéance)
 
 
 def ajouter_mois(d: date, mois: int, jour: int | None = None) -> date:
@@ -226,24 +226,30 @@ class Anticipes:
     reduire_duree: bool = True
     t: float = 0.0  # taux périodique, pour recalculer l'échéance
     appliques: dict[int, float] = field(default_factory=dict)  # capital effectivement remboursé par anticipation
-    imposes: dict[int, float] = field(default_factory=dict)  # capital constaté (grand livre) par échéance
-    pleine: tuple[int, float] | None = None  # (indice de la 1re échéance pleine, capital à y rembourser)
+    imposes: dict[int, float] = field(default_factory=dict)  # capital constaté (grand livre) ou corrigé, par échéance
+    interets: dict[int, float] = field(default_factory=dict)  # intérêts corrigés par l'utilisateur, par échéance
+    echeances: dict[int, float] = field(default_factory=dict)  # échéances (intérêts + capital) saisies, par échéance
 
-    def echeance_pleine(self, k: int, interet: float, restant: float) -> float | None:
-        """Échéance recalculée pour que la 1re échéance pleine rembourse le capital saisi."""
-        if self.pleine and k == self.pleine[0]:
-            return round(interet + min(max(round(self.pleine[1], 2), 0.0), restant), 2)
-        return None
+    @property
+    def corriges(self) -> set[int]:
+        return set(self.imposes) | set(self.interets) | set(self.echeances)
 
-    def amortissement(self, k: int, a: float, restant: float) -> float:
-        """Amortissement de l'échéance k : celui constaté au grand livre s'il existe, sinon `a`."""
+    def interet(self, k: int, interet: float) -> float:
+        return max(round(self.interets[k], 2), 0.0) if k in self.interets else interet
+
+    def amortissement(self, k: int, a: float, restant: float, interet: float = 0.0) -> float:
+        """Amortissement de l'échéance k : échéance saisie moins ses intérêts, capital constaté (grand livre)
+        ou corrigé s'il existe, sinon `a`."""
+        if k in self.echeances:
+            return min(max(round(self.echeances[k] - interet, 2), 0.0), restant)
         if k in self.imposes:
             return min(max(round(self.imposes[k], 2), 0.0), restant)
         return a
 
     def apres_constate(self, k: int, restant_apres: float, n: int) -> float | None:
-        """Après le dernier montant constaté : échéance recalculée sur le capital restant, jusqu'au terme."""
-        if self.imposes and k == max(self.imposes) and restant_apres > 0.005 and k < n - 1:
+        """Après le dernier montant constaté ou corrigé (capital ou intérêts) : échéance recalculée sur le
+        capital restant, jusqu'au terme."""
+        if k in self.corriges and restant_apres > 0.005 and k < n - 1:
             return echeance_pour(restant_apres, self.t, n - k - 1)
         return None
 
@@ -276,15 +282,14 @@ def tableau_constant(
     anticipes = anticipes or Anticipes()
     lignes, restant, n = [], base, len(facteurs)
     for k, facteur in enumerate(facteurs):
-        interet = round(restant * facteur, 2)
-        echeance = anticipes.echeance_pleine(k, interet, restant) or echeance
+        interet = anticipes.interet(k, round(restant * facteur, 2))
         if k == n - 1:
             a = restant
             if abs(round(echeance - a, 2) - interet) <= 0.02:
                 interet = round(echeance - a, 2)
         else:
             a = min(max(round(echeance - interet, 2), 0.0), restant)
-        a = anticipes.amortissement(k, a, restant)
+        a = anticipes.amortissement(k, a, restant, interet)
         a = round(a + anticipes.appliquer(k, a, restant), 2)
         lignes.append((interet, a))
         restant = round(restant - a, 2)
@@ -330,13 +335,12 @@ def tableau_proratise(
             interet = interet_reel(p, restant, debut, fin, facteur)
             a = min(max(round(round(echeance * (base - reste_a_verser) / base, 2) - interet, 2), 0.0), restant)
         else:
+            if echeance_finale is None:
+                echeance_finale = echeance_pour(restant, p.taux_periodique, n - k)
             interet = round(restant * facteur, 2)
-            if echeance_finale is None:  # 1re échéance pleine
-                echeance_finale = anticipes.echeance_pleine(k, interet, restant) or echeance_pour(
-                    restant, p.taux_periodique, n - k
-                )
             a = min(max(round(echeance_finale - interet, 2), 0.0), restant)
-        a = anticipes.amortissement(k, a, restant)
+        interet = anticipes.interet(k, interet)
+        a = anticipes.amortissement(k, a, restant, interet)
         a = round(a + anticipes.appliquer(k, a, restant), 2)
         lignes.append((interet, a))
         restant = round(restant - a, 2)
@@ -379,6 +383,9 @@ def calculer(p: ParametresPret) -> Resultat:
         raise ValueError("Le nombre d'échéances doit être supérieur au nombre d'échéances de différé.")
     dates = dates_echeances(p)
     interets = interets_differe(p, dates)
+    differe_corrige = [k for k, d in enumerate(dates[: p.nb_echeances_differe]) if "interet" in p.corrections.get(d, {})]
+    for k in differe_corrige:  # intérêts du différé corrigés par l'utilisateur
+        interets[k] = max(round(p.corrections[dates[k]]["interet"], 2), 0.0)
     facteurs = facteurs_interets(p, dates)
     calcules = round(sum(interets), 2) if p.interets_differe_capitalises else 0.0
 
@@ -396,19 +403,18 @@ def calculer(p: ParametresPret) -> Resultat:
         k = next((j for j, d in enumerate(dates[k0:]) if d >= ra.date), None)
         if k is not None:
             anticipes.par_echeance.setdefault(k, []).append(ra)
-    debuts = [ajouter_mois(dates[0], -p.mois_par_periode, p.jour_prelevement)] + dates[:-1]
-    indice_pleine = next(
-        (
-            k for k in range(n)
-            if non_verse(p, debuts[k0 + k]) <= 0.005 and not any(debuts[k0 + k] < x.date <= dates[k0 + k] for x in p.deblocages)
-        ),
-        None,
-    )
-    if p.capital_echeance_pleine and indice_pleine is not None and indice_pleine < n - 1:
-        anticipes.pleine = (indice_pleine, p.capital_echeance_pleine)
     for k, d in enumerate(dates[k0:]):  # capital constaté au grand livre, rapproché par mois
         if d.strftime("%Y-%m") in p.capital_impose:
             anticipes.imposes[k] = p.capital_impose[d.strftime("%Y-%m")]
+    for k, d in enumerate(dates[k0:]):  # corrections de l'utilisateur (prioritaires)
+        correction = p.corrections.get(d, {})
+        if k < n - 1:  # la dernière échéance solde toujours le capital
+            if "amortissement" in correction:
+                anticipes.imposes[k] = correction["amortissement"]
+            if "echeance" in correction:  # intérêts + capital (hors assurance et frais)
+                anticipes.echeances[k] = correction["echeance"]
+        if "interet" in correction:
+            anticipes.interets[k] = correction["interet"]
 
     echeance = None
     proratise = (
@@ -421,14 +427,13 @@ def calculer(p: ParametresPret) -> Resultat:
         part = round(base / n, 2)
         lignes_amort, restant = [], base
         for k, facteur in enumerate(facteurs):
-            if anticipes.pleine and k == anticipes.pleine[0]:
-                part = round(anticipes.pleine[1], 2)  # amortissement constant fixé par le capital saisi
+            interet = anticipes.interet(k, round(restant * facteur, 2))
             a = restant if k == n - 1 else min(part, restant)
-            a = anticipes.amortissement(k, a, restant)
+            a = anticipes.amortissement(k, a, restant, interet)
             a = round(a + anticipes.appliquer(k, a, restant), 2)
-            lignes_amort.append((round(restant * facteur, 2), a))
+            lignes_amort.append((interet, a))
             restant = round(restant - a, 2)
-            dernier_constate = bool(anticipes.imposes) and k == max(anticipes.imposes)
+            dernier_constate = k in anticipes.corriges
             if (dernier_constate or (k in anticipes.appliques and not anticipes.reduire_duree)) and k < n - 1:
                 part = round(restant / (n - k - 1), 2)  # amortissement réparti sur la durée restante
     else:
@@ -437,7 +442,10 @@ def calculer(p: ParametresPret) -> Resultat:
             if p.echeance_assurance_comprise:
                 # Échéance saisie assurance comprise : on retire l'assurance de la 1re échéance d'amortissement.
                 echeance = round(echeance - p.assurance_sur(base), 2)
-            if plafond and p.interets_capitalises_imposes is None and not p.partiel and not p.capital_impose:
+            if (
+                plafond and p.interets_capitalises_imposes is None and not p.partiel and not p.capital_impose
+                and not differe_corrige
+            ):
                 # Différé capitalisé : l'échéance de la banque fixe le capital amorti, donc les intérêts
                 # capitalisés — retenus seulement s'ils restent vraisemblables (entre 0 et le plafond).
                 calibre = calibrer_base(echeance, t, facteurs, p.remboursements_constates)
@@ -455,7 +463,13 @@ def calculer(p: ParametresPret) -> Resultat:
 
     if p.interets_differe_capitalises and interets and capitalises != calcules:
         # Total imposé par la banque : l'écart est réparti au prorata des intérêts de chaque mois.
-        interets = repartir_ecart(interets, capitalises)
+        # Les mois corrigés par l'utilisateur restent tels quels ; l'écart porte sur les autres.
+        libres = [k for k in range(len(interets)) if k not in differe_corrige]
+        if libres:
+            fixe = sum(interets[k] for k in differe_corrige)
+            for k, v in zip(libres, repartir_ecart([interets[k] for k in libres], round(capitalises - fixe, 2))):
+                interets[k] = v
+
 
     # Capital soldé avant la fin (déblocage partiel, échéance maintenue) : les échéances suivantes
     # restent dans l'échéancier, à 0 hors assurance et frais, jusqu'au terme prévu du prêt.
@@ -474,6 +488,9 @@ def calculer(p: ParametresPret) -> Resultat:
         else:
             interet, amort = lignes_amort[k - p.nb_echeances_differe]
         assurance = p.assurance_sur(crd_debut)  # capital restant dû réel en début de période
+        correction = p.corrections.get(d, {})
+        assurance = max(round(correction.get("assurance", assurance), 2), 0.0)
+        frais[k] = max(round(correction.get("frais", frais[k]), 2), 0.0)
         solde = round(solde - amort, 2)
         paye = round(interet + amort, 2)  # nul pendant un différé capitalisé
         solde_reel = round(solde - non_verse(p, d), 2)
@@ -487,12 +504,8 @@ def calculer(p: ParametresPret) -> Resultat:
         (dates[k0 + k], montant, round(sum(ra.indemnites for ra in anticipes.par_echeance[k]), 2))
         for k, montant in sorted(anticipes.appliques.items())
     ]
-    pleine = None
-    if indice_pleine is not None and k0 + indice_pleine < len(echeancier):
-        ligne = echeancier.iloc[k0 + indice_pleine]
-        pleine = (ligne["Date"], float(ligne["Amortissement (€)"]), round(float(ligne["Intérêt (€)"] + ligne["Amortissement (€)"]), 2))
     return Resultat(
-        echeancier, base, calcules, capitalises, echeance, soldees[0] if soldees else len(lignes), appliques, pleine
+        echeancier, base, calcules, capitalises, echeance, soldees[0] if soldees else len(lignes), appliques
     )
 
 
