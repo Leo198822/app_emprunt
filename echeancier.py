@@ -100,6 +100,8 @@ class ParametresPret:
     # correction de capital, l'échéance est recalculée pour finir au terme
     capital_impose: dict[str, float] = field(default_factory=dict)  # « AAAA-MM » → capital remboursé constaté
     # (grand livre) ; après le dernier, l'échéance est recalculée pour finir au terme
+    echeances_constatees: dict[str, float] = field(default_factory=dict)  # « AAAA-MM » → intérêts + capital
+    # constatés (grand livre, intérêts inclus) : le capital vaut ce montant moins les intérêts calculés de la ligne
     anticipe_reduit_duree: bool = True  # après un remboursement partiel : True = durée réduite (échéance
     # maintenue) ; False = échéance recalculée sur la durée restante
     montant_debloque: float | None = None  # déblocage partiel : montant réellement versé (None = en totalité)
@@ -566,11 +568,14 @@ def calculer(p: ParametresPret) -> Resultat:
     for k, d in enumerate(dates[k0:]):  # capital constaté au grand livre, rapproché par mois
         if d.strftime("%Y-%m") in p.capital_impose:
             anticipes.imposes[k] = p.capital_impose[d.strftime("%Y-%m")]
+        if d.strftime("%Y-%m") in p.echeances_constatees:  # intérêts inclus : capital = montant - intérêts
+            anticipes.echeances[k] = p.echeances_constatees[d.strftime("%Y-%m")]
     for k, d in enumerate(dates[k0:]):  # corrections de l'utilisateur (prioritaires)
         correction = p.corrections.get(d, {})
         if k < n - 1:  # la dernière échéance solde toujours le capital
             if "amortissement" in correction:
                 anticipes.imposes[k] = correction["amortissement"]
+                anticipes.echeances.pop(k, None)  # la correction l'emporte sur le grand livre
             if "echeance" in correction:  # intérêts + capital (hors assurance et frais)
                 anticipes.echeances[k] = correction["echeance"]
         if "interet" in correction:
@@ -606,6 +611,7 @@ def calculer(p: ParametresPret) -> Resultat:
                 echeance = round(echeance - p.assurance_sur(base), 2)
             if (
                 plafond and p.interets_capitalises_imposes is None and not p.partiel and not p.capital_impose
+                and not p.echeances_constatees
                 and not differe_corrige
             ):
                 # Différé capitalisé : l'échéance de la banque fixe le capital amorti, donc les intérêts
@@ -823,45 +829,71 @@ def lire_grand_livre(fichier) -> tuple[list[Deblocage], pd.DataFrame]:
 
 def comparer(echeancier: pd.DataFrame, remboursements: pd.DataFrame) -> pd.DataFrame:
     """Rapproche le capital remboursé en comptabilité de l'amortissement calculé, mois par mois."""
-    colonnes = ["Date", "Amortissement (€)", "Assurance (€)", "Autres frais (€)", "Échéance (€)"]
+    colonnes = ["Date", "Intérêt (€)", "Amortissement (€)", "Assurance (€)", "Autres frais (€)", "Échéance (€)"]
     calc = echeancier[echeancier["Amortissement (€)"] > 0][colonnes].copy()
     calc["Mois"] = [d.strftime("%Y-%m") for d in calc["Date"]]
     reel = remboursements.copy()
     reel["Mois"] = [d.strftime("%Y-%m") for d in reel["Date"]]
     comp = reel.drop(columns="Date").merge(calc, on="Mois", how="left")
     comp["Écart (€)"] = (comp["Capital remboursé (€)"] - comp["Amortissement (€)"]).round(2)
-    return comp[["Date", "Capital remboursé (€)", "Amortissement (€)", "Écart (€)", "Assurance (€)", "Autres frais (€)", "Échéance (€)"]]
+    return comp[[
+        "Date", "Capital remboursé (€)", "Amortissement (€)", "Écart (€)", "Intérêt (€)", "Assurance (€)",
+        "Autres frais (€)", "Échéance (€)",
+    ]]
 
 
-def capital_constate(controle: pd.DataFrame, nature: str | None) -> dict[str, float]:
-    """Capital remboursé par mois d'après le grand livre, à appliquer à l'échéancier (« AAAA-MM » → montant).
+def contient(nature: str | None, element: str) -> bool:
+    """Le débit du compte 164 décrit par `nature` (voir `diagnostic_controle`) contient-il cet élément ?"""
+    return bool(nature) and (nature == "échéance complète" or element in nature)
 
-    Si les débits du compte 164 incluent aussi l'assurance, les frais ou toute l'échéance (voir
-    `diagnostic_controle`), ces éléments sont retirés pour ne garder que le capital."""
+
+def capital_constate(controle: pd.DataFrame, nature: str | None, interets_inclus: bool = False) -> dict[str, float]:
+    """Montants du grand livre à appliquer à l'échéancier, par mois (« AAAA-MM » → montant).
+
+    L'assurance et les frais sont retirés des débits du compte 164 s'ils y figurent (voir `diagnostic_controle`).
+    Intérêts exclus (`interets_inclus` False) : le résultat est le capital remboursé ; si les débits contiennent
+    les intérêts, les intérêts calculés en sont retirés. Intérêts inclus : le résultat est intérêts + capital, à
+    passer en `echeances_constatees` (le capital en est déduit ligne par ligne avec les intérêts recalculés)."""
     c = controle.dropna(subset=["Amortissement (€)"])
-    capital = c["Capital remboursé (€)"].copy()
-    if nature and "assurance" in nature:
-        capital -= c["Assurance (€)"]
-    if nature and "frais" in nature:
-        capital -= c["Autres frais (€)"]
-    if nature == "échéance complète":
-        capital -= c["Échéance (€)"] - c["Amortissement (€)"]
-    return {d.strftime("%Y-%m"): round(float(v), 2) for d, v in zip(c["Date"], capital)}
+    montant = c["Capital remboursé (€)"].copy()
+    if contient(nature, "assurance"):
+        montant -= c["Assurance (€)"]
+    if contient(nature, "frais"):
+        montant -= c["Autres frais (€)"]
+    if contient(nature, "intérêts") and not interets_inclus:
+        montant -= c["Intérêt (€)"]
+    return {d.strftime("%Y-%m"): round(float(v), 2) for d, v in zip(c["Date"], montant)}
+
+
+def ecarts_controle(controle: pd.DataFrame, nature: str | None, interets_inclus: bool) -> pd.Series:
+    """Écart entre chaque débit du compte 164 et ce qu'il devrait contenir d'après l'échéancier : capital, plus
+    les intérêts s'ils sont inclus, plus l'assurance et les frais s'ils figurent dans les débits."""
+    attendu = controle["Amortissement (€)"].copy()
+    if interets_inclus:
+        attendu += controle["Intérêt (€)"]
+    if contient(nature, "assurance"):
+        attendu += controle["Assurance (€)"]
+    if contient(nature, "frais"):
+        attendu += controle["Autres frais (€)"]
+    return (controle["Capital remboursé (€)"] - attendu).round(2)
 
 
 def diagnostic_controle(controle: pd.DataFrame) -> str | None:
     """Ce que contiennent les débits du compte 164, s'ils correspondent au centime à une composante de
-    l'échéancier : « capital », « capital + assurance », « capital + assurance + frais », « capital + frais »
-    ou « échéance complète ». None si aucune ne correspond."""
+    l'échéancier : « capital », « capital + assurance », « capital + assurance + frais », « capital + frais »,
+    « capital + intérêts », « capital + intérêts + assurance » ou « échéance complète ». None si aucune ne
+    correspond."""
     c = controle.dropna(subset=["Amortissement (€)"])
     if c.empty:
         return None
-    a, ass, fr = c["Amortissement (€)"], c["Assurance (€)"], c["Autres frais (€)"]
+    a, i, ass, fr = c["Amortissement (€)"], c["Intérêt (€)"], c["Assurance (€)"], c["Autres frais (€)"]
     candidats = {
         "capital": a,
         "capital + assurance": a + ass,
         "capital + assurance + frais": a + ass + fr,
         "capital + frais": a + fr,
+        "capital + intérêts": a + i,
+        "capital + intérêts + assurance": a + i + ass,
         "échéance complète": c["Échéance (€)"],
     }
     for nom, attendu in candidats.items():

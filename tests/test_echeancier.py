@@ -13,6 +13,7 @@ from echeancier import (
     plafond_interets_capitalises,
     solde_a_la_date,
     diagnostic_controle,
+    ecarts_controle,
     ajuster_sur_solde,
     calculer,
     MODELE_PENNYLANE,
@@ -735,3 +736,31 @@ def test_ajouter_et_supprimer_des_echeances():
 def test_les_echeances_du_differe_ne_sont_ni_ajoutees_ni_supprimees():
     p = replace(pret_banque(), corrections={date(2026, 1, 5): {"supprimee": True}, date(2026, 2, 20): {"ajoutee": True}})
     assert len(calculer_echeancier(p)) == 60
+
+
+def test_grand_livre_interets_inclus():
+    """Débits du compte 164 = intérêts + capital : reconnus, puis appliqués comme échéances (capital = débit moins
+    intérêts recalculés), ou réduits au capital si l'utilisateur choisit « capital seul »."""
+    p = pret_banque(468.45)
+    p.interets_capitalises_imposes = 185.76
+    banque = calculer_echeancier(p)
+    _, remboursements = lire_grand_livre(GRAND_LIVRE)
+    controle = comparer(banque, remboursements)
+    avec_interets = remboursements.assign(**{
+        "Capital remboursé (€)": (remboursements["Capital remboursé (€)"] + controle["Intérêt (€)"]).round(2)
+    })
+    assert diagnostic_controle(comparer(banque, avec_interets)) == "capital + intérêts"
+    # Échéancier calculé autrement (sans le différé calé) : écarts avec le grand livre.
+    autre = replace(p, echeance_imposee=480.0)  # échéance différente : écarts avec le grand livre
+    controle = comparer(calculer_echeancier(autre), avec_interets)
+    nature = diagnostic_controle(controle)
+    assert nature is None
+    assert (ecarts_controle(controle, nature, True).abs() > 0.02).any()
+    # Intérêts inclus : chaque débit devient l'échéance (intérêts + capital) de la ligne.
+    e = calculer_echeancier(replace(autre, echeances_constatees=capital_constate(controle, nature, True)))
+    apres = comparer(e, avec_interets)
+    assert (ecarts_controle(apres, nature, True).abs() <= 0.01).all()
+    assert e["Solde (€)"].iloc[-1] == pytest.approx(0)
+    # Capital seul : si les débits contiennent les intérêts, les intérêts calculés en sont retirés.
+    montants = capital_constate(comparer(banque, avec_interets), "capital + intérêts", False)
+    assert list(montants.values()) == remboursements["Capital remboursé (€)"].tolist()

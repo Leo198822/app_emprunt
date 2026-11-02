@@ -17,6 +17,8 @@ from echeancier import (
     calculer_echeancier,
     capital_constate,
     comparer,
+    contient,
+    ecarts_controle,
     dates_echeances,
     dates_suspendues,
     diagnostic_controle,
@@ -765,14 +767,23 @@ with st.expander("🎯 Ajuster sur un capital restant dû connu (facultatif)"):
 # Contrôle avec le grand livre : établi sur l'échéancier calculé ; si l'utilisateur choisit d'appliquer les
 # montants du grand livre, l'échéancier est régénéré avec le capital constaté.
 cle_appliquer = cle("appliquer_grand_livre")
+cle_interets_gl = cle("grand_livre_interets_inclus")
+CHOIX_INTERETS_GL = ["le capital seul (hors intérêts)", "le capital et les intérêts"]
 controle_initial = nature_initiale = None
-grand_livre_applique = False
+grand_livre_applique = interets_inclus_gl = False
 if remboursements is not None and not remboursements.empty:
     controle_initial = sans_plantage(lambda: comparer(calculer_echeancier(params), remboursements))
     nature_initiale = diagnostic_controle(controle_initial)
+    # Intérêts compris dans les débits du compte 164 : choix de l'utilisateur (affiché plus bas), par défaut
+    # d'après ce que les débits contiennent.
+    choix_defaut_gl = CHOIX_INTERETS_GL[1 if contient(nature_initiale, "intérêts") else 0]
+    interets_inclus_gl = st.session_state.get(cle_interets_gl, choix_defaut_gl) == CHOIX_INTERETS_GL[1]
     grand_livre_applique = nature_initiale != "capital" and st.session_state.get(cle_appliquer, False)
     if grand_livre_applique:
-        params = replace(params, capital_impose=capital_constate(controle_initial, nature_initiale))
+        montants_gl = capital_constate(controle_initial, nature_initiale, interets_inclus_gl)
+        params = replace(
+            params, **({"echeances_constatees": montants_gl} if interets_inclus_gl else {"capital_impose": montants_gl})
+        )
 
 # Modifications faites par l'utilisateur directement dans le tableau d'échéancier (par date d'échéance).
 cle_corrections = cle("corrections")
@@ -957,7 +968,8 @@ if controle_initial is None:
     )
 else:
     nature, n = nature_initiale, len(controle_initial)
-    hors = f" (hors {nature.replace('capital + ', '')})" if nature and nature not in ("capital", "échéance complète") else ""
+    retires = [e for e in ("assurance", "frais") if contient(nature, e)]
+    hors = f" (hors {' et '.join(retires)})" if retires else ""
     if nature == "capital":
         st.success(f"✅ Les {n} remboursements de capital du grand livre correspondent déjà à l'échéancier : rien à appliquer.")
     else:
@@ -965,30 +977,51 @@ else:
             pass  # le message de réussite, sous l'interrupteur, suffit
         elif nature:
             st.info(
-                f"ℹ️ Les {n} remboursements du compte 164 correspondent à **{nature}** de l'échéancier : "
-                "l'échéance a été passée en totalité au compte d'emprunt. Seul le capital sera repris."
+                f"ℹ️ Les {n} débits du compte 164 correspondent à **{nature}** de l'échéancier"
+                + (f" : {' et '.join(retires)} en sont retirés avant d'appliquer les montants." if retires else ".")
             )
         else:
-            st.warning(f"⚠️ Le capital remboursé en comptabilité ({n} échéances) diffère de l'échéancier.")
+            st.warning(f"⚠️ Les montants remboursés en comptabilité ({n} échéances) diffèrent de l'échéancier.")
+        st.radio(
+            "Les montants du grand livre (débits du compte 164) comprennent…",
+            CHOIX_INTERETS_GL,
+            index=CHOIX_INTERETS_GL.index(choix_defaut_gl),
+            key=cle_interets_gl,
+            horizontal=True,
+            help="Capital seul : chaque débit est repris comme capital remboursé. Capital et intérêts : chaque débit "
+            "est repris comme échéance (intérêts + capital) ; le capital en est déduit avec les intérêts calculés "
+            "de la ligne. Le choix proposé par défaut est déduit des montants.",
+        )
         st.toggle(
             f"Appliquer les montants du grand livre à l'échéancier{hors}",
             key=cle_appliquer,
-            help="Reprend le capital remboursé comptabilisé au compte 164 pour chaque échéance concernée ; "
+            help="Reprend les montants comptabilisés au compte 164 pour chaque échéance concernée ; "
             "les échéances suivantes sont recalculées sur le capital restant dû pour finir au terme. "
             "Désactivez pour revenir au calcul théorique.",
         )
         if grand_livre_applique:
+            nb_gl = len(params.echeances_constatees or params.capital_impose)
             st.success(
-                f"✅ Montants du grand livre appliqués : le capital des {len(params.capital_impose)} échéance(s) "
-                "comptabilisée(s) est repris, et les échéances suivantes sont recalculées pour solder le prêt au terme."
+                f"✅ Montants du grand livre appliqués à {nb_gl} échéance(s) "
+                + (
+                    "comme échéances intérêts compris : le capital vaut le débit moins les intérêts calculés"
+                    if interets_inclus_gl else "comme capital remboursé"
+                )
+                + ". Les échéances suivantes sont recalculées pour solder le prêt au terme."
             )
     controle = sans_plantage(comparer, echeancier, remboursements)
-    ecarts_restants = diagnostic_controle(controle) != "capital"
+    controle["Écart (€)"] = ecarts_controle(controle, nature, interets_inclus_gl)
+    ecarts_restants = bool((controle["Écart (€)"].abs() > 0.02).any())
     with st.expander("Détail : grand livre / échéancier"):
+        colonnes_detail = ["Date", "Capital remboursé (€)", "Amortissement (€)"]
+        if interets_inclus_gl:
+            colonnes_detail.append("Intérêt (€)")
         st.dataframe(
-            tableau_euros(controle[["Date", "Capital remboursé (€)", "Amortissement (€)", "Écart (€)"]].rename(
-                columns={"Capital remboursé (€)": "Débit compte 164 (€)", "Amortissement (€)": "Capital échéancier (€)"}
-            )),
+            tableau_euros(controle[colonnes_detail + ["Écart (€)"]].rename(columns={
+                "Capital remboursé (€)": "Débit compte 164 (€)",
+                "Amortissement (€)": "Capital échéancier (€)",
+                "Intérêt (€)": "Intérêts échéancier (€)",
+            })),
             hide_index=True,
             width="stretch",
         )

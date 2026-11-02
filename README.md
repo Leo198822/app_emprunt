@@ -50,6 +50,13 @@ L'écran se remplit en quelques étapes ; l'échéancier se génère dès que le
    l'échéancier. En cas d'écart, l'interrupteur « Appliquer les montants du grand livre à l'échéancier »
    reprend le capital comptabilisé (hors assurance/frais s'ils ont été passés au 164) pour les échéances
    concernées, puis recalcule les échéances suivantes pour solder le prêt au terme.
+   Juste au-dessus, choisir ce que comprennent les débits du compte 164 :
+   - *le capital seul (hors intérêts)* : chaque débit est repris comme capital remboursé ;
+   - *le capital et les intérêts* : chaque débit est repris comme échéance (intérêts + capital), et le
+     capital en est déduit avec les intérêts calculés de la ligne.
+   Le choix proposé par défaut dépend des montants : « capital et intérêts » s'ils correspondent au centime au
+   capital plus les intérêts de l'échéancier. Le détail grand livre / échéancier affiche alors aussi les intérêts,
+   et l'écart compare chaque débit au capital plus les intérêts.
 3. **Suspension d'échéances (facultatif)** : case « Le prêt a fait l'objet d'une suspension d'échéances ».
    Pour chaque suspension : date de la 1re échéance suspendue, nombre d'échéances consécutives et type :
    - *capital seul* : seuls les intérêts (plus l'assurance et les frais) sont prélevés, le capital restant dû
