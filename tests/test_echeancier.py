@@ -824,3 +824,28 @@ def test_ajustement_apres_grand_livre_et_modifications():
     assert (comparer(e, grand_livre)["Écart (€)"].dropna().abs() < 0.01).all()  # grand livre toujours appliqué
     assert e[e["Date"] == date(2027, 1, 5)]["Intérêt (€)"].iloc[0] == 60.0  # modification conservée
     assert e["Solde (€)"].iloc[-1] == 0
+
+
+def test_repartition_jamais_de_signe_contraire():
+    """Petit montant réparti sur beaucoup d'échéances : aucune part négative, total exact."""
+    from echeancier import repartir
+    for total, n in [(1.0, 157), (50.0, 300), (0.05, 12)]:
+        parts = repartir(total, n)
+        assert round(sum(parts), 2) == total and min(parts) >= 0
+
+
+def test_pret_a_taux_nul_sans_interet():
+    p = ParametresPret(capital=5_541.60, taux=0.0, nb_echeances=197, date_premier_paiement=date(2026, 3, 28),
+                       jour_prelevement=28)
+    e = calculer_echeancier(p)
+    assert e["Intérêt (€)"].abs().sum() == 0 and e["Solde (€)"].iloc[-1] == 0
+
+
+def test_grand_livre_sur_la_derniere_echeance_solde_le_pret():
+    p = ParametresPret(capital=10_000, taux=3.55, nb_echeances=9, nb_echeances_differe=6,
+                       date_premier_paiement=date(2025, 10, 10), jour_prelevement=10, periodicite="Annuelle")
+    e = calculer_echeancier(p)
+    mois = {d.strftime("%Y-%m"): round(a - 100, 2) for d, a in zip(e["Date"], e["Amortissement (€)"]) if a > 0}
+    for cle in ("capital_impose", "echeances_constatees"):
+        e2 = calculer_echeancier(replace(p, **{cle: mois}))
+        assert e2["Solde (€)"].iloc[-1] == 0

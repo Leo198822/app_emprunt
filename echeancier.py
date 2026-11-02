@@ -274,7 +274,12 @@ def repartir(total: float, n: int) -> list[float]:
     if n <= 0:
         return []
     part = round(total / n, 2)
-    return [part] * (n - 1) + [round(total - part * (n - 1), 2)]
+    derniere = round(total - part * (n - 1), 2)
+    if derniere < 0 <= total or derniere > 0 >= total:
+        # Arrondi de la part trop fort (petit montant sur beaucoup d'échéances) : la dernière deviendrait de signe
+        # contraire. Les centimes sont alors répartis un à un, au plus fort reste.
+        return repartir_ecart([1.0] * n, total)
+    return [part] * (n - 1) + [derniere]
 
 
 def interets_differe(p: ParametresPret, dates: list[date]) -> list[float]:
@@ -435,7 +440,9 @@ def tableau_constant(
         else:
             if k == n - 1:
                 a = restant
-                if abs(round(echeance - a, 2) - interet) <= 0.02 and round(echeance - a, 2) >= 0:
+                # Écart d'arrondi : la dernière échéance reste égale aux autres (jamais d'intérêts sur un prêt sans
+                # intérêt).
+                if interet > 0 and abs(round(echeance - a, 2) - interet) <= 0.02 and round(echeance - a, 2) >= 0:
                     interet = round(echeance - a, 2)
             else:
                 a = min(max(round(echeance - interet, 2), 0.0), restant)
@@ -600,7 +607,8 @@ def calculer(p: ParametresPret) -> Resultat:
         k = next((j for j, d in enumerate(dates[k0:]) if d >= ra.date), None)
         if k is not None:
             anticipes.par_echeance.setdefault(k, []).append(ra)
-    for k, d in enumerate(dates[k0:]):  # capital constaté au grand livre, rapproché par mois
+    for k, d in enumerate(dates[k0:-1]):  # capital constaté au grand livre, rapproché par mois (sauf la dernière
+        # échéance, qui solde toujours le capital)
         if d.strftime("%Y-%m") in p.capital_impose:
             anticipes.imposes[k] = p.capital_impose[d.strftime("%Y-%m")]
         if d.strftime("%Y-%m") in p.echeances_constatees:  # intérêts inclus : capital = montant - intérêts
