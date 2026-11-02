@@ -36,7 +36,7 @@ L'écran se remplit en quelques étapes ; l'échéancier se génère dès que le
    utilisée (amortissement constant), une date d'ajustement postérieure à la fin du prêt. Dans le tableau
    d'échéancier, les montants négatifs ou supérieurs au capital plus les intérêts du prêt sont refusés.
    **Déblocages après la 1re échéance de remboursement du capital** (plusieurs déblocages) : l'option
-   n'apparaît que dans ce cas. Jusqu'au dernier déblocage, les échéances sont au choix
+   n'apparaît que dans ce cas, en tête de la rubrique « Échéancier ». Jusqu'au dernier déblocage, les échéances sont au choix
    - *proratisées* (**par défaut**) : réduites au prorata des fonds déjà versés, intérêts sur le capital
      réellement versé, puis échéance recalculée après le dernier déblocage pour solder le prêt au terme ;
    - *totales* : échéance constante, calculée sur la totalité du prêt dès la 1re échéance, quelles que
@@ -98,10 +98,10 @@ L'écran se remplit en quelques étapes ; l'échéancier se génère dès que le
    Dans le tableau, la 1re colonne repère les lignes modifiées (✏️) et ajoutées (➕) ; au-dessus, un résumé
    compte les échéances modifiées, ajoutées et supprimées. L'échéancier ne se trie pas : un clic sur l'en-tête
    d'une colonne est sans effet, et il n'a pas de barre d'outils (recherche, téléchargement CSV…).
-   Partie « Contrôler l'échéancier avant téléchargement », en deux temps : 1. appliquer les montants du
-   grand livre (si importé) ; 2. s'il reste des écarts, modifier directement l'échéancier. Le bouton de
-   téléchargement est placé sous le tableau.
-6. **Ajustement (facultatif)** : sous l'échéancier, saisir une date et le capital restant dû connu à
+   Partie « Contrôler l'échéancier avant téléchargement », en trois temps : 1. appliquer les montants du
+   grand livre (si importé) ; 2. ajuster sur un capital restant dû connu (facultatif) ; 3. s'il reste des
+   écarts, modifier directement l'échéancier. Le bouton de téléchargement est placé sous le tableau.
+6. **Ajustement (facultatif)** : point 2 de « Contrôler l'échéancier », saisir une date et le capital restant dû connu à
    cette date (tableau de la banque, relevé…). L'échéancier est recalculé pour retomber exactement
    dessus : l'application ajuste les intérêts ajoutés au capital pendant le différé ou, sans différé,
    l'échéance.

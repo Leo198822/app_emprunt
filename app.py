@@ -445,33 +445,6 @@ elif deblocages:
             "choisissez « partiellement » à l'étape 1 si une partie des fonds ne sera jamais versée."
         )
 
-echeance_proratisee = interets_fonds_verses = False
-if len(deblocages) > 1 and premier_paiement and nb_echeances and type_remboursement == "Échéances constantes":
-    mois = PERIODICITES[periodicite]
-    premiere_amortissement = ajouter_mois(premier_paiement, int(nb_differe) * mois, premier_paiement.day)
-    tardifs = [d for d in deblocages if d.date > premiere_amortissement]
-    if tardifs:
-        st.markdown(
-            f"**{len(tardifs)} déblocage{'s' if len(tardifs) > 1 else ''}** "
-            f"intervien{'nent' if len(tardifs) > 1 else 't'} après la 1re échéance de remboursement du capital "
-            f"({premiere_amortissement.strftime('%d/%m/%Y')}). Jusqu'au dernier déblocage "
-            f"({max(d.date for d in tardifs).strftime('%d/%m/%Y')}), les échéances sont…"
-        )
-        mode_tardifs = st.radio(
-            "Échéances avant le dernier déblocage",
-            [
-                "totales : échéance constante, calculée sur la totalité du prêt dès la 1re échéance",
-                "proratisées : réduites au prorata des fonds déjà versés, puis recalculées après le dernier déblocage",
-                "capital du prêt complet, intérêts sur les seuls fonds versés : capital de l'échéance constante du prêt "
-                "complet, intérêts calculés sur les fonds déjà versés (échéance réduite jusqu'au dernier déblocage)",
-            ],
-            key=cle("echeance_proratisee"),
-            index=1,  # proratisation par défaut, en fonction des dates de déblocage
-            label_visibility="collapsed",
-        )
-        echeance_proratisee = mode_tardifs.startswith("proratisées")
-        interets_fonds_verses = mode_tardifs.startswith("capital du prêt complet")
-
 # --- Suspensions d'échéances ------------------------------------------------------------
 # Libellés courts : ils doivent tenir dans la colonne du tableau (le détail est expliqué sous le tableau).
 TYPES_SUSPENSION = {
@@ -701,6 +674,35 @@ if depassement or manque or erreurs_dates:
     st.error(f"⛔ Échéancier non généré : {motif} (voir l'étape 2).")
     st.stop()
 
+# Échéances avant le dernier déblocage (en tête de la rubrique Échéancier).
+echeance_proratisee = interets_fonds_verses = False
+if len(deblocages) > 1 and premier_paiement and nb_echeances and type_remboursement == "Échéances constantes":
+    mois = PERIODICITES[periodicite]
+    premiere_amortissement = ajouter_mois(premier_paiement, int(nb_differe) * mois, premier_paiement.day)
+    tardifs = [d for d in deblocages if d.date > premiere_amortissement]
+    if tardifs:
+        st.markdown(
+            "**Échéances pendant le déblocage des fonds** — "
+            f"{len(tardifs)} déblocage{'s' if len(tardifs) > 1 else ''} "
+            f"intervien{'nent' if len(tardifs) > 1 else 't'} après la 1re échéance de remboursement du capital "
+            f"({premiere_amortissement.strftime('%d/%m/%Y')}). Jusqu'au dernier déblocage "
+            f"({max(d.date for d in tardifs).strftime('%d/%m/%Y')}), les échéances sont…"
+        )
+        mode_tardifs = st.radio(
+            "Échéances avant le dernier déblocage",
+            [
+                "totales : échéance constante, calculée sur la totalité du prêt dès la 1re échéance",
+                "proratisées : réduites au prorata des fonds déjà versés, puis recalculées après le dernier déblocage",
+                "capital du prêt complet, intérêts sur les seuls fonds versés : capital de l'échéance constante du prêt "
+                "complet, intérêts calculés sur les fonds déjà versés (échéance réduite jusqu'au dernier déblocage)",
+            ],
+            key=cle("echeance_proratisee"),
+            index=1,  # proratisation par défaut, en fonction des dates de déblocage
+            label_visibility="collapsed",
+        )
+        echeance_proratisee = mode_tardifs.startswith("proratisées")
+        interets_fonds_verses = mode_tardifs.startswith("capital du prêt complet")
+
 params = ParametresPret(
     capital=capital,
     taux=taux,
@@ -731,50 +733,46 @@ params = ParametresPret(
     suspension_allonge_duree=suspension_allonge,
     interets_reportes_etales=interets_reportes_etales,
 )
-with st.expander("🎯 Ajuster sur un capital restant dû connu (facultatif)"):
-    st.caption(
-        "Si vous connaissez le capital restant dû à une date (tableau de la banque, relevé annuel…), saisissez-le : "
-        "l'échéancier est recalculé pour retomber exactement sur ce montant."
-    )
-    c1, c2 = st.columns(2)
-    date_reference = c1.date_input("Date", key=cle("date_reference"), value=None, format="DD/MM/YYYY")
-    solde_reference = c2.number_input(
-        "Capital restant dû à cette date (€)", key=cle("solde_reference"), min_value=0.0, value=None, step=0.01, format="%.2f", placeholder="ex. 21 859,20"
-    )
-    derniere_date = dates_echeances(params)[-1]
-    if date_reference and date_reference > derniere_date:
-        st.error(
-            f"⛔ Ajustement impossible : la date saisie ({date_reference.strftime('%d/%m/%Y')}) est postérieure à la "
-            f"dernière échéance du prêt ({derniere_date.strftime('%d/%m/%Y')}). Vérifiez l'année."
+# Ajustement sur un capital restant dû connu : calculé ici, avant l'échéancier, avec les valeurs saisies dans les
+# champs affichés plus bas (« Contrôler l'échéancier », n°2) ; les messages y sont affichés.
+cle_date_reference, cle_solde_reference = cle("date_reference"), cle("solde_reference")
+date_reference = st.session_state.get(cle_date_reference)
+solde_reference = st.session_state.get(cle_solde_reference)
+messages_ajustement = []  # (type de message, texte)
+derniere_date = dates_echeances(params)[-1]
+if date_reference and date_reference > derniere_date:
+    messages_ajustement.append(("error",
+        f"⛔ Ajustement impossible : la date saisie ({date_reference.strftime('%d/%m/%Y')}) est postérieure à la "
+        f"dernière échéance du prêt ({derniere_date.strftime('%d/%m/%Y')}). Vérifiez l'année."
+    ))
+elif date_reference and solde_reference is not None:
+    ajustement = sans_plantage(ajuster_sur_solde, params, date_reference, solde_reference)
+    if ajustement is None:
+        messages_ajustement.append(("error", "⛔ Ajustement impossible : la date saisie est antérieure à la 1re échéance."))
+    elif not ajustement.possible:
+        bas, haut = ajustement.fourchette or (ajustement.solde_obtenu, ajustement.solde_obtenu)
+        messages_ajustement.append(("error",
+            f"⛔ Ajustement impossible : à l'échéance du {ajustement.date_echeance.strftime('%d/%m/%Y')}, le capital "
+            + (f"restant dû ne peut être que de {euros(bas)}" if abs(haut - bas) < 0.01 else f"restant dû ne peut varier qu'entre {euros(bas)} et {euros(haut)}")
+            + f" avec ces paramètres (saisi : {euros(solde_reference)}). Vérifiez la date, le montant, le taux, le différé "
+            "ou l'échéance saisie. L'échéancier n'a pas été modifié."
+        ))
+    else:
+        params = ajustement.parametres
+        precision = abs(ajustement.solde_obtenu - solde_reference)
+        detail = (
+            f"intérêts ajoutés au capital pendant le différé : {euros(params.interets_capitalises_imposes)}"
+            if ajustement.levier == "intérêts capitalisés"
+            else f"échéance recalculée, assurance comprise : {euros(params.echeance_imposee)}"
         )
-    elif date_reference and solde_reference is not None:
-        ajustement = sans_plantage(ajuster_sur_solde, params, date_reference, solde_reference)
-        if ajustement is None:
-            st.error("⛔ Ajustement impossible : la date saisie est antérieure à la 1re échéance.")
-        elif not ajustement.possible:
-            bas, haut = ajustement.fourchette or (ajustement.solde_obtenu, ajustement.solde_obtenu)
-            st.error(
-                f"⛔ Ajustement impossible : à l'échéance du {ajustement.date_echeance.strftime('%d/%m/%Y')}, le capital "
-                + (f"restant dû ne peut être que de {euros(bas)}" if abs(haut - bas) < 0.01 else f"restant dû ne peut varier qu'entre {euros(bas)} et {euros(haut)}")
-                + f" avec ces paramètres (saisi : {euros(solde_reference)}). Vérifiez la date, le montant, le taux, le différé "
-                "ou l'échéance saisie. L'échéancier n'a pas été modifié."
-            )
-        else:
-            params = ajustement.parametres
-            precision = abs(ajustement.solde_obtenu - solde_reference)
-            detail = (
-                f"intérêts ajoutés au capital pendant le différé : {euros(params.interets_capitalises_imposes)}"
-                if ajustement.levier == "intérêts capitalisés"
-                else f"échéance recalculée, assurance comprise : {euros(params.echeance_imposee)}"
-            )
-            message = (
-                f"Échéancier recalculé ({detail}). Capital restant dû après l'échéance du "
-                f"{ajustement.date_echeance.strftime('%d/%m/%Y')} : {euros(ajustement.solde_obtenu)}"
-            )
-            if precision <= 0.005:
-                st.success(message + " ✅")
-            else:
-                st.warning(message + f" — le plus proche possible au centime (écart {euros(precision)}).")
+        message = (
+            f"Échéancier recalculé ({detail}). Capital restant dû après l'échéance du "
+            f"{ajustement.date_echeance.strftime('%d/%m/%Y')} : {euros(ajustement.solde_obtenu)}"
+        )
+        messages_ajustement.append(
+            ("success", message + " ✅") if precision <= 0.005
+            else ("warning", message + f" — le plus proche possible au centime (écart {euros(precision)}).")
+        )
 
 # Contrôle avec le grand livre : établi sur l'échéancier calculé ; si l'utilisateur choisit d'appliquer les
 # montants du grand livre, l'échéancier est régénéré avec le capital constaté.
@@ -862,7 +860,7 @@ if insuffisance := fonds_insuffisants(params, echeancier):
             else ""
         )
         + ". Vérifiez les dates des déblocages"
-        + (", ou choisissez des échéances « proratisées » à l'étape 2" if len(deblocages) > 1 and not echeance_proratisee and type_remboursement == "Échéances constantes" else "")
+        + (", ou choisissez des échéances « proratisées » en tête de l'échéancier" if len(deblocages) > 1 and not echeance_proratisee and type_remboursement == "Échéances constantes" else "")
         + (", ou annulez vos modifications du tableau" if corrections else "")
         + "."
     )
@@ -968,15 +966,15 @@ if params.nb_echeances_differe and interets_capitalises:
     )
 
 st.subheader("Contrôler l'échéancier avant téléchargement")
-st.caption("Comparez l'échéancier au tableau d'amortissement de la banque et corrigez-le si besoin, en deux temps.")
+st.caption("Comparez l'échéancier au tableau d'amortissement de la banque et corrigez-le si besoin, en trois temps.")
 
 # 1. Grand livre ------------------------------------------------------------------------------------------
 st.markdown("##### 1. Appliquez les montants du grand livre")
 ecarts_restants = None  # None : pas de grand livre ; True / False : écarts avec le grand livre après l'étape 1
 if controle_initial is None:
     st.caption(
-        "Aucun grand livre importé : importez celui du compte d'emprunt à l'étape 2 pour comparer le capital "
-        "remboursé en comptabilité à l'échéancier et l'appliquer. Sinon, passez directement à l'étape 2 ci-dessous."
+        "Aucun grand livre importé : importez celui du compte d'emprunt (rubrique 2. Les déblocages) pour comparer le capital "
+        "remboursé en comptabilité à l'échéancier et l'appliquer. Sinon, passez directement aux points 2 et 3 ci-dessous."
     )
 else:
     nature, n = nature_initiale, len(controle_initial)
@@ -1038,14 +1036,29 @@ else:
             width="stretch",
         )
 
-# 2. Modification directe ---------------------------------------------------------------------------------
+# 2. Ajustement sur un capital restant dû connu ------------------------------------------------------------
+st.markdown("##### 2. Ajustez sur un capital restant dû connu (facultatif)")
+st.caption(
+    "Si vous connaissez le capital restant dû à une date (tableau de la banque, relevé annuel…), saisissez-le : "
+    "l'échéancier est recalculé pour retomber exactement sur ce montant."
+)
+c1, c2 = st.columns(2)
+c1.date_input("Date", key=cle_date_reference, value=None, format="DD/MM/YYYY")
+c2.number_input(
+    "Capital restant dû à cette date (€)", key=cle_solde_reference, min_value=0.0, value=None, step=0.01, format="%.2f",
+    placeholder="ex. 21 859,20",
+)
+for type_message, texte in messages_ajustement:
+    getattr(st, type_message)(texte)
+
+# 3. Modification directe ---------------------------------------------------------------------------------
 COLONNES_MODIFIABLES = {
     "Intérêt (€)": "interet",
     "Assurance (€)": "assurance",
     "Autres frais (€)": "frais",
     "Amortissement (€)": "amortissement",
 }
-st.markdown("##### 2. S'il reste des écarts, modifiez directement l'échéancier")
+st.markdown("##### 3. S'il reste des écarts, modifiez directement l'échéancier")
 if ecarts_restants:
     st.warning(
         "⚠️ Il reste des écarts avec le grand livre (voir le détail ci-dessus) : corrigez-les directement dans le "
