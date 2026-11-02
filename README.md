@@ -158,6 +158,10 @@ Règles déduites du grand livre d'un prêt Crédit Agricole à déblocages succ
   (échéance à 0, le solde augmente), ce qui garde un solde cohérent depuis le capital de l'en-tête.
 - Dates au format français (jj/mm/aaaa) dans l'application et dans le fichier exporté.
 - Arrondis au centime ligne par ligne ; la dernière échéance solde le capital.
+- Prêt débloqué en totalité : l'échéancier s'arrête à l'échéance qui solde le capital, sans échéance à 0 en
+  fin de tableau (échéance saisie plus forte que nécessaire, remboursement anticipé, montants imposés) ; un
+  message indique le nombre d'échéances au lieu de celui prévu. Les autres frais sont répartis sur les
+  échéances restantes. Seul un déblocage partiel avec l'échéance du prêt complet garde des échéances à 0.
 - Assurance, au choix :
   - *montant fixe* : coût mensuel saisi, multiplié par le nombre de mois de la période (× 3 en
     trimestriel…), prélevé à chaque échéance jusqu'au terme du prêt, y compris après le solde du capital ;

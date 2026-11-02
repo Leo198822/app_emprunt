@@ -692,16 +692,28 @@ def calculer(p: ParametresPret) -> Resultat:
                 interets[k] = v
 
 
-    # Capital soldé avant la fin (déblocage partiel, échéance maintenue) : les échéances suivantes
-    # restent dans l'échéancier, à 0 hors assurance et frais, jusqu'au terme prévu du prêt.
-    frais = repartir(p.montant_total_autres_frais, len(dates))
+    # Capital soldé avant le terme (échéance saisie plus forte que nécessaire, remboursement anticipé, montants
+    # imposés…) : l'échéancier s'arrête à l'échéance qui solde le capital, sans échéances à 0 ensuite. Seul un
+    # déblocage partiel avec l'échéance du prêt complet garde ces échéances à 0 hors assurance et frais,
+    # jusqu'au terme prévu du prêt.
+    amortissements = [
+        -interets[k] if p.interets_differe_capitalises else 0.0 for k in range(p.nb_echeances_differe)
+    ] + [a for _, a in lignes_amort]
+    solde_theorique, soldees = p.capital_effectif, []
+    for k, a in enumerate(amortissements):
+        solde_theorique = round(solde_theorique - a, 2)
+        if k >= p.nb_echeances_differe and solde_theorique <= 0.005:
+            soldees.append(k + 1)
+            break
+    fin = soldees[0] if soldees and (anticipes.appliques or not p.partiel) else len(dates)
+    frais = repartir(p.montant_total_autres_frais, fin) + [0.0] * (len(dates) - fin)  # frais sur les échéances restantes
     for k, ras in anticipes.par_echeance.items():  # indemnités de remboursement anticipé
         frais[k0 + k] = round(frais[k0 + k] + sum(ra.indemnites for ra in ras), 2)
     # Le tableau porte sur la totalité du prêt (échéance constante, comme la banque) ; le solde affiché est
     # le capital réellement versé à chaque date (les fonds non encore débloqués n'en font pas partie).
     lignes, solde = [], p.capital_effectif
     debut = ajouter_mois(dates[0], -p.mois_par_periode, p.jour_prelevement)
-    for k, d in enumerate(dates):
+    for k, d in enumerate(dates[:fin]):
         crd_debut = round(solde - non_verse(p, debut), 2)
         if k < p.nb_echeances_differe:
             interet = interets[k]
@@ -717,9 +729,6 @@ def calculer(p: ParametresPret) -> Resultat:
         solde_reel = round(solde - non_verse(p, d), 2)
         lignes.append([d, interet, assurance, frais[k], amort, round(paye + assurance + frais[k], 2), solde_reel])
         debut = d
-    soldees = [k + 1 for k in range(p.nb_echeances_differe, len(lignes)) if lignes[k][6] <= 0.005]
-    if anticipes.appliques and soldees:
-        lignes = lignes[: soldees[0]]  # prêt soldé par anticipation : plus d'échéance ensuite
     echeancier = pd.DataFrame(lignes, columns=COLONNES)
     appliques = [
         (dates[k0 + k], montant, round(sum(ra.indemnites for ra in anticipes.par_echeance[k]), 2))

@@ -858,3 +858,17 @@ def test_differe_sans_deblocage_saisi_periode_pleine():
                        interets_differe_capitalises=False, date_premier_paiement=date(2026, 3, 31), jour_prelevement=31)
     e = calculer_echeancier(p)
     assert (e["Intérêt (€)"].iloc[:3] == round(100_000 * 0.0342 / 12, 2)).all()
+
+
+def test_pas_d_echeance_a_zero_en_fin_si_deblocage_complet():
+    """Échéance saisie plus forte que nécessaire : le capital est soldé avant le terme et l'échéancier s'arrête
+    là, sans échéances à 0 ; les autres frais restent répartis en totalité sur les échéances restantes."""
+    p = ParametresPret(capital=10_000, taux=4.0, nb_echeances=24, date_premier_paiement=date(2026, 1, 5),
+                       jour_prelevement=5, echeance_imposee=600.0, autres_frais=240.0)
+    e = calculer_echeancier(p)
+    assert len(e) < 24 and e["Solde (€)"].iloc[-1] == 0
+    assert ((e["Intérêt (€)"] + e["Amortissement (€)"]).round(2) > 0).all()
+    assert round(e["Autres frais (€)"].sum(), 2) == 240.0
+    # Déblocage partiel avec l'échéance du prêt complet : les échéances à 0 restent jusqu'au terme (voulu).
+    partiel = calculer_echeancier(replace(p, echeance_imposee=None, montant_debloque=7_500, autres_frais=0.0))
+    assert len(partiel) == 24

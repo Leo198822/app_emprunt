@@ -898,10 +898,19 @@ for jour_ra, montant_ra, indemnites_ra in resultat.anticipes:
         + (f", avec {euros(indemnites_ra)} d'indemnités (colonne Autres frais)" if indemnites_ra else "")
         + "."
     )
-if resultat.anticipes and len(echeancier) < len(dates_echeances(params)):
+if len(echeancier) < len(dates_echeances(params)):
+    # Capital soldé avant le terme : l'échéancier s'arrête là (pas d'échéances à 0 ensuite).
     st.info(
         f"Prêt soldé le {echeancier['Date'].iloc[-1].strftime('%d/%m/%Y')} : {len(echeancier)} échéances au lieu de "
-        f"{len(dates_echeances(params))}."
+        f"{len(dates_echeances(params))}"
+        + (
+            " (remboursement anticipé)."
+            if resultat.anticipes
+            else " : l'échéance saisie ou les montants imposés remboursent le capital avant le terme. Vérifiez le "
+            "montant de l'échéance si la banque prévoit la durée complète."
+            if params.echeance_imposee or params.corrections or params.capital_impose or params.echeances_constatees
+            else "."
+        )
     )
 suspendues = dates_suspendues(params)
 if suspendues:
