@@ -294,13 +294,16 @@ def interets_differe(p: ParametresPret, dates: list[date]) -> list[float]:
         Deblocage(ajouter_mois(dates[0], -p.mois_par_periode, p.jour_prelevement), p.capital_effectif)
     ]
     r, t = p.taux / 100, p.taux_periodique
+    debut_initial = ajouter_mois(dates[0], -p.mois_par_periode, p.jour_prelevement)
     interets, debut = [], None
     for fin in dates[: p.nb_echeances_differe]:
         interet = 0.0
         for d in deblocages:
             if d.date >= fin:
                 continue
-            if debut is not None and d.date <= debut:
+            # Fonds versés au début de la période (ou avant, après la 1re échéance) : période pleine. Pour la 1re
+            # échéance, des fonds versés exactement une période avant (cas sans déblocage saisi) aussi.
+            if (debut is not None and d.date <= debut) or (debut is None and d.date == debut_initial):
                 interet += d.montant * t
             else:
                 interet += d.montant * r * p.jours_depuis(d.date, fin) / BASE_JOURS

@@ -849,3 +849,12 @@ def test_grand_livre_sur_la_derniere_echeance_solde_le_pret():
     for cle in ("capital_impose", "echeances_constatees"):
         e2 = calculer_echeancier(replace(p, **{cle: mois}))
         assert e2["Solde (€)"].iloc[-1] == 0
+
+
+def test_differe_sans_deblocage_saisi_periode_pleine():
+    """Sans déblocage saisi, les fonds sont versés une période avant la 1re échéance : intérêts sur une période
+    pleine (taux / 12), comme les échéances suivantes, et non en jours."""
+    p = ParametresPret(capital=100_000, taux=3.42, nb_echeances=120, nb_echeances_differe=3,
+                       interets_differe_capitalises=False, date_premier_paiement=date(2026, 3, 31), jour_prelevement=31)
+    e = calculer_echeancier(p)
+    assert (e["Intérêt (€)"].iloc[:3] == round(100_000 * 0.0342 / 12, 2)).all()
