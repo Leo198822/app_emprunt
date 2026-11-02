@@ -687,3 +687,29 @@ def test_suspension_en_echeances_proratisees_et_export(tmp_path):
     assert len(e) == 38 and e["Solde (€)"].iloc[-1] == 0
     assert (e["Échéance (€)"].iloc[6:8] == 0).all()
     assert exporter_pennylane(p, e)
+
+
+@pytest.mark.parametrize("allonge", [True, False])
+def test_interets_reportes_non_capitalises_etales(allonge):
+    p = pret_suspendu(False, allonge)
+    p.suspensions[0].interets_reportes = True
+    r = calculer(p)
+    e = r.echeancier
+    suspendues = e.iloc[5:8]
+    assert (suspendues[["Intérêt (€)", "Amortissement (€)", "Échéance (€)"]] == 0).all().all()
+    assert (e["Solde (€)"].iloc[5:8] == e["Solde (€)"].iloc[4]).all()  # le capital n'augmente pas
+    assert e["Solde (€)"].iloc[-1] == 0 and len(e) == (27 if allonge else 24)
+    # Les intérêts reportés sont payés ensuite : même total que s'ils avaient été payés à leur date.
+    capital_seul = calculer_echeancier(pret_suspendu(True, allonge))
+    assert r.interets_reportes == round(capital_seul["Intérêt (€)"].iloc[5:8].sum(), 2)
+    assert round(e["Intérêt (€)"].sum(), 2) == round(capital_seul["Intérêt (€)"].sum(), 2)
+    assert (e["Amortissement (€)"] == capital_seul["Amortissement (€)"]).all()
+
+
+def test_interets_reportes_payes_en_une_fois_a_la_reprise():
+    p = replace(pret_suspendu(False, True), interets_reportes_etales=False)
+    p.suspensions[0].interets_reportes = True
+    r = calculer(p)
+    e, capital_seul = r.echeancier, calculer_echeancier(pret_suspendu(True, True))
+    assert e["Intérêt (€)"].iloc[8] == round(capital_seul["Intérêt (€)"].iloc[8] + r.interets_reportes, 2)
+    assert (e["Intérêt (€)"].iloc[9:] == capital_seul["Intérêt (€)"].iloc[9:]).all()

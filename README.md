@@ -56,12 +56,17 @@ L'écran se remplit en quelques étapes ; l'échéancier se génère dès que le
      ne bouge pas ;
    - *capital et intérêts* : rien n'est prélevé hors assurance et frais ; les intérêts de la période sont
      ajoutés au capital restant dû (amortissement négatif dans le fichier Pennylane, comme pendant un différé).
+   - *capital et intérêts, intérêts reportés non capitalisés* : rien n'est prélevé hors assurance et frais,
+     le capital restant dû ne bouge pas et les intérêts reportés ne portent pas intérêt. Ils figurent à 0 sur
+     les échéances suspendues et sont payés après la reprise, en plus des intérêts normaux : au choix
+     *étalés sur les échéances restantes* (jusqu'au solde du capital) ou *en une fois* avec la 1re échéance
+     après la reprise. Le total des intérêts est le même qu'avec une suspension du capital seul.
    À la fin de la suspension, au choix : *durée allongée* du nombre d'échéances suspendues (échéance inchangée
-   si seul le capital a été suspendu, recalculée sur le nouveau capital sinon), ou *durée maintenue*
+   hors intérêts reportés si le capital n'a pas augmenté, recalculée sur le nouveau capital sinon), ou *durée maintenue*
    (échéance recalculée sur les échéances restantes). Contrôles : une suspension ne peut pas commencer
    pendant le différé ni après la dernière échéance, et, à durée maintenue, doit laisser au moins une
    échéance de remboursement. Dans le tableau, les lignes suspendues n'acceptent que la modification des
-   intérêts, de l'assurance et des frais.
+   intérêts (sauf intérêts reportés), de l'assurance et des frais.
 4. **Remboursements anticipés (facultatif)** : case « Le prêt a fait l'objet d'un remboursement anticipé ».
    Pour chacun : date, capital remboursé (ou case « Total »), indemnités (IRA). Le remboursement est intégré
    à l'échéance qui suit sa date (Amortissement ; indemnités en Autres frais). Après un remboursement

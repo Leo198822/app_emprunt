@@ -14,7 +14,8 @@ Principe (constaté sur le grand livre d'un prêt Crédit Agricole à déblocage
   complet (le capital est soldé plus tôt ; les échéances suivantes restent jusqu'au terme, à 0 hors
   assurance), soit avec une échéance réduite étalée sur toute la durée ;
 - **suspension d'échéances** (report) pendant l'amortissement : soit du capital seul (les intérêts restent
-  payés), soit du capital et des intérêts (les intérêts sont ajoutés au capital, comme pendant un différé) ;
+  payés), soit du capital et des intérêts — ajoutés au capital (comme pendant un différé) ou **reportés sans
+  être capitalisés** (payés ensuite, étalés sur les échéances restantes ou en une fois à la reprise) ;
   à la reprise, la durée est allongée du nombre d'échéances suspendues, ou maintenue (échéance recalculée).
 """
 
@@ -57,7 +58,19 @@ class Suspension:
     date: date  # date de la 1re échéance suspendue (rattachée à la 1re échéance d'amortissement à cette date ou après)
     nb_echeances: int = 1  # nombre d'échéances consécutives suspendues
     capital_seul: bool = True  # True : seul le capital est suspendu, les intérêts sont payés ;
-    # False : capital et intérêts suspendus, les intérêts sont ajoutés au capital
+    # False : capital et intérêts suspendus, les intérêts sont ajoutés au capital (ou reportés, voir ci-dessous)
+    interets_reportes: bool = False  # capital et intérêts suspendus : True = intérêts reportés sans être ajoutés
+    # au capital (ils ne portent pas intérêt et sont payés après la reprise)
+
+    @property
+    def reporte(self) -> bool:
+        """Intérêts reportés non capitalisés."""
+        return not self.capital_seul and self.interets_reportes
+
+    @property
+    def capital_inchange(self) -> bool:
+        """Le capital restant dû n'augmente pas pendant la suspension (capital seul, ou intérêts reportés)."""
+        return self.capital_seul or self.interets_reportes
 
 
 @dataclass
@@ -97,6 +110,8 @@ class ParametresPret:
     suspensions: list[Suspension] = field(default_factory=list)  # échéances suspendues (report) en amortissement
     suspension_allonge_duree: bool = True  # True : la durée est allongée du nombre d'échéances suspendues ;
     # False : durée maintenue, l'échéance est recalculée à la reprise sur les échéances restantes
+    interets_reportes_etales: bool = True  # intérêts reportés non capitalisés : True = étalés sur les échéances
+    # restantes ; False = payés en une fois à la 1re échéance après la reprise
 
     @property
     def nb_echeances_suspendues(self) -> int:
@@ -164,6 +179,7 @@ class Resultat:
     echeance_constante: float | None
     rang_capital_solde: int  # rang de l'échéance qui solde le capital (= nombre d'échéances sans fin anticipée)
     anticipes: list[tuple[date, float, float]] = field(default_factory=list)  # (échéance, capital, indemnités)
+    interets_reportes: float = 0.0  # intérêts des suspensions reportés sans être capitalisés
 
 
 def ajouter_mois(d: date, mois: int, jour: int | None = None) -> date:
@@ -182,8 +198,8 @@ def dates_echeances(p: ParametresPret) -> list[date]:
     return [ajouter_mois(premiere, k * p.mois_par_periode, p.jour_prelevement) for k in range(p.nb_echeances_total)]
 
 
-def indices_suspendus(p: ParametresPret, dates: list[date]) -> dict[int, bool]:
-    """Échéances d'amortissement suspendues (indice → capital seul ?). La dernière échéance, qui solde le
+def indices_suspendus(p: ParametresPret, dates: list[date]) -> dict[int, Suspension]:
+    """Échéances d'amortissement suspendues (indice → suspension). La dernière échéance, qui solde le
     capital, n'est jamais suspendue."""
     k0, suspendues = p.nb_echeances_differe, {}
     n = len(dates) - k0
@@ -192,14 +208,45 @@ def indices_suspendus(p: ParametresPret, dates: list[date]) -> dict[int, bool]:
         if debut is None:
             continue
         for k in range(debut, min(debut + max(int(s.nb_echeances), 0), n - 1)):
-            suspendues[k] = s.capital_seul
+            suspendues[k] = s
     return suspendues
 
 
-def dates_suspendues(p: ParametresPret) -> dict[date, bool]:
-    """Dates des échéances suspendues (date → capital seul ?)."""
+def dates_suspendues(p: ParametresPret) -> dict[date, Suspension]:
+    """Dates des échéances suspendues (date → suspension)."""
     dates = dates_echeances(p)
-    return {dates[p.nb_echeances_differe + k]: seul for k, seul in sorted(indices_suspendus(p, dates).items())}
+    return {dates[p.nb_echeances_differe + k]: s for k, s in sorted(indices_suspendus(p, dates).items())}
+
+
+def reporter_interets(
+    lignes: list[tuple[float, float]], suspendues: dict[int, Suspension], base: float, corriges: set[int], etales: bool
+) -> tuple[list[tuple[float, float]], float]:
+    """Intérêts reportés non capitalisés : les intérêts des échéances suspendues ne sont pas payés (0 dans
+    l'échéancier) et s'ajoutent aux intérêts des échéances qui suivent la reprise — étalés sur toutes les
+    échéances restantes jusqu'au solde du capital, ou payés en une fois à la 1re. Les échéances suspendues
+    ou modifiées par l'utilisateur ne les reçoivent pas. Retourne les lignes et le total reporté."""
+    lignes = [list(ligne) for ligne in lignes]
+    restants, restant = [], base  # capital restant dû avant chaque échéance
+    for _, a in lignes:
+        restants.append(restant)
+        restant = round(restant - a, 2)
+    n, total, k = len(lignes), 0.0, 0
+    while k < n:
+        if k not in suspendues or not suspendues[k].reporte:
+            k += 1
+            continue
+        fin = k
+        while fin + 1 < n and fin + 1 in suspendues and suspendues[fin + 1].reporte:
+            fin += 1
+        montant = round(sum(lignes[j][0] for j in range(k, fin + 1)), 2)
+        for j in range(k, fin + 1):
+            lignes[j][0] = 0.0
+        cibles = [j for j in range(fin + 1, n) if j not in suspendues and j not in corriges and restants[j] > 0.005]
+        cibles = (cibles if etales else cibles[:1]) or [n - 1]
+        for j, part in zip(cibles, repartir(montant, len(cibles))):
+            lignes[j][0] = round(lignes[j][0] + part, 2)
+        total, k = round(total + montant, 2), fin + 1
+    return [tuple(ligne) for ligne in lignes], total
 
 
 def repartir(total: float, n: int) -> list[float]:
@@ -489,9 +536,11 @@ def calculer(p: ParametresPret) -> Resultat:
     base = round(p.capital_effectif + capitalises, 2)
 
     k0 = p.nb_echeances_differe
+    suspendues = indices_suspendus(p, dates)
     anticipes = Anticipes(
-        reduire_duree=p.anticipe_reduit_duree, t=t, suspendues=indices_suspendus(p, dates),
-        allonge=p.suspension_allonge_duree,
+        reduire_duree=p.anticipe_reduit_duree, t=t, allonge=p.suspension_allonge_duree,
+        # Intérêts reportés : le capital ne bouge pas, comme pour une suspension du capital seul.
+        suspendues={k: s.capital_inchange for k, s in suspendues.items()},
     )
     # Échéance de l'offre : calculée sur sa durée, hors échéances suspendues ajoutées par l'allongement.
     n_offre = n - (p.nb_echeances_total - p.nb_echeances)
@@ -559,6 +608,11 @@ def calculer(p: ParametresPret) -> Resultat:
             lignes_amort = tableau_proratise(p, dates, base, echeance, facteurs, anticipes)
         else:
             lignes_amort = tableau_constant(base, echeance, facteurs, anticipes)
+    reportes = 0.0
+    if any(s.reporte for s in suspendues.values()):
+        lignes_amort, reportes = reporter_interets(
+            lignes_amort, suspendues, base, anticipes.corriges, p.interets_reportes_etales
+        )
 
     if p.interets_differe_capitalises and interets and capitalises != calcules:
         # Total imposé par la banque : l'écart est réparti au prorata des intérêts de chaque mois.
@@ -604,7 +658,8 @@ def calculer(p: ParametresPret) -> Resultat:
         for k, montant in sorted(anticipes.appliques.items())
     ]
     return Resultat(
-        echeancier, base, calcules, capitalises, echeance, soldees[0] if soldees else len(lignes), appliques
+        echeancier, base, calcules, capitalises, echeance, soldees[0] if soldees else len(lignes), appliques,
+        reportes,
     )
 
 

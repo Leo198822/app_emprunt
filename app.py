@@ -438,9 +438,10 @@ if len(deblocages) > 1 and premier_paiement and nb_echeances and type_remboursem
 TYPES_SUSPENSION = {
     "Capital seul (intérêts payés)": True,
     "Capital et intérêts (intérêts ajoutés au capital)": False,
+    "Capital et intérêts (intérêts reportés, non capitalisés)": False,
 }
 etape = 3
-suspensions, suspension_allonge, erreurs_suspensions = [], True, []
+suspensions, suspension_allonge, interets_reportes_etales, erreurs_suspensions = [], True, True, []
 if st.checkbox(
     "Le prêt a fait l'objet d'une **suspension d'échéances** (report, pause des remboursements)", key=cle("avec_suspension")
 ):
@@ -466,7 +467,8 @@ if st.checkbox(
                 "Suspension du…", options=list(TYPES_SUSPENSION), default=next(iter(TYPES_SUSPENSION)), required=True,
                 width="large",
                 help="Capital seul : seuls les intérêts (et l'assurance) sont prélevés. Capital et intérêts : rien n'est "
-                "prélevé hors assurance, les intérêts sont ajoutés au capital restant dû.",
+                "prélevé hors assurance ; les intérêts sont soit ajoutés au capital restant dû (ils portent alors "
+                "intérêt), soit reportés sans être capitalisés et payés après la reprise.",
             ),
         },
         ["Date", "Nombre"],
@@ -482,16 +484,29 @@ if st.checkbox(
         elif not nombre_ok or int(r["Nombre"]) < 1:
             erreurs_suspensions.append(f"ligne n°{numero} : indiquez le nombre d'échéances suspendues")
         else:
+            type_su = r["Type"] if pd.notna(r["Type"]) else ""
             suspensions.append(Suspension(
                 pd.Timestamp(r["Date"]).date(), int(r["Nombre"]),
-                TYPES_SUSPENSION.get(r["Type"] if pd.notna(r["Type"]) else "", True),
+                TYPES_SUSPENSION.get(type_su, True), interets_reportes="reportés" in type_su,
             ))
     st.caption(
         "Pendant une suspension du **capital seul**, l'échéance se limite aux intérêts (plus l'assurance et les frais). "
         "Pendant une suspension du **capital et des intérêts**, rien n'est prélevé hors assurance et frais : les "
         "intérêts sont ajoutés au capital restant dû (amortissement négatif dans le fichier Pennylane, comme pendant "
-        "un différé), et l'échéance est recalculée à la reprise."
+        "un différé), et l'échéance est recalculée à la reprise. Avec des **intérêts reportés non capitalisés**, "
+        "le capital restant dû ne bouge pas : les intérêts de la suspension (à 0 dans l'échéancier) sont payés "
+        "après la reprise, en plus des intérêts normaux."
     )
+    if any(su.reporte for su in suspensions):
+        interets_reportes_etales = st.radio(
+            "Les intérêts reportés sont payés…",
+            [
+                "étalés sur les échéances restantes",
+                "en une fois, avec la 1re échéance après la reprise",
+            ],
+            key=cle("interets_reportes_etales"),
+            horizontal=True,
+        ).startswith("étalés")
     suspension_allonge = st.radio(
         "À la fin de la suspension…",
         [
@@ -672,6 +687,7 @@ params = ParametresPret(
     anticipe_reduit_duree=anticipe_reduit_duree,
     suspensions=suspensions,
     suspension_allonge_duree=suspension_allonge,
+    interets_reportes_etales=interets_reportes_etales,
 )
 with st.expander("🎯 Ajuster sur un capital restant dû connu (facultatif)"):
     st.caption(
@@ -840,7 +856,15 @@ if suspendues:
     st.info(
         f"⏸️ {len(suspendues)} échéance{'s' if len(suspendues) > 1 else ''} suspendue{'s' if len(suspendues) > 1 else ''} "
         f"({', '.join(d.strftime('%d/%m/%Y') for d in suspendues)})"
-        + (f" : {euros(ajoutes)} d'intérêts ajoutés au capital" if ajoutes else " : intérêts payés, capital non remboursé")
+        + (
+            " : " + " ; ".join(filter(None, [
+                f"{euros(ajoutes)} d'intérêts ajoutés au capital" if ajoutes else "",
+                f"{euros(resultat.interets_reportes)} d'intérêts reportés (non capitalisés), payés "
+                + ("en plus des intérêts des échéances restantes" if params.interets_reportes_etales
+                   else "avec la 1re échéance après la reprise")
+                if resultat.interets_reportes else "",
+            ])) if ajoutes or resultat.interets_reportes else " : intérêts payés, capital non remboursé"
+        )
         + (
             f". Durée allongée : {params.nb_echeances_total} échéances au lieu de {params.nb_echeances}."
             if params.suspension_allonge_duree
@@ -1010,6 +1034,9 @@ if modifications:
             if valeur is not None and not 0 <= float(valeur) <= plafond_saisie:
                 refusees.append(f"{euros(float(valeur))} le {jour.strftime('%d/%m/%Y')}")
                 continue
+            if colonne == "Intérêt (€)" and jour in suspendues and suspendues[jour].reporte:
+                ignorees += 1  # intérêts reportés : payés après la reprise, pas à cette échéance
+                continue
             if colonne == "Échéance (€)":
                 if dans_differe or valeur is None:
                     ignorees += 1
@@ -1036,7 +1063,8 @@ if modifications:
     messages = []
     if ignorees:
         messages.append(
-            "Pendant le différé ou une suspension d'échéances, seuls les intérêts, l'assurance et les frais sont modifiables."
+            "Pendant le différé ou une suspension d'échéances, seuls les intérêts, l'assurance et les frais sont "
+            "modifiables (et pas les intérêts reportés d'une suspension, payés après la reprise)."
         )
     if refusees:
         messages.append(
