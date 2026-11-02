@@ -435,10 +435,11 @@ if len(deblocages) > 1 and premier_paiement and nb_echeances and type_remboursem
         ).startswith("proratisées")
 
 # --- Suspensions d'échéances ------------------------------------------------------------
+# Libellés courts : ils doivent tenir dans la colonne du tableau (le détail est expliqué sous le tableau).
 TYPES_SUSPENSION = {
-    "Capital seul (intérêts payés)": True,
-    "Capital et intérêts (intérêts ajoutés au capital)": False,
-    "Capital et intérêts (intérêts reportés, non capitalisés)": False,
+    "Capital seul": True,
+    "Capital + intérêts capitalisés": False,
+    "Capital + intérêts reportés": False,
 }
 etape = 3
 suspensions, suspension_allonge, interets_reportes_etales, erreurs_suspensions = [], True, True, []
@@ -456,16 +457,15 @@ if st.checkbox(
         cle("suspensions"),
         {
             "Date": st.column_config.DateColumn(
-                "1re échéance suspendue", format="DD/MM/YYYY", required=True,
-                help="Date de la 1re échéance non prélevée (ou date de début de la suspension).",
+                "1re échéance", format="DD/MM/YYYY", required=True, width=165,
+                help="Date de la 1re échéance suspendue, non prélevée (ou date de début de la suspension).",
             ),
             "Nombre": st.column_config.NumberColumn(
-                "Nombre d'échéances", min_value=1, max_value=600, step=1, format="%d", required=True,
+                "Nb d'échéances", min_value=1, max_value=600, step=1, format="%d", required=True, default=1, width=125,
                 help="Nombre d'échéances consécutives suspendues.",
             ),
             "Type": st.column_config.SelectboxColumn(
-                "Suspension du…", options=list(TYPES_SUSPENSION), default=next(iter(TYPES_SUSPENSION)), required=True,
-                width="large",
+                "Type de suspension", options=list(TYPES_SUSPENSION), default=next(iter(TYPES_SUSPENSION)), required=True, width=300,
                 help="Capital seul : seuls les intérêts (et l'assurance) sont prélevés. Capital et intérêts : rien n'est "
                 "prélevé hors assurance ; les intérêts sont soit ajoutés au capital restant dû (ils portent alors "
                 "intérêt), soit reportés sans être capitalisés et payés après la reprise.",
@@ -487,15 +487,17 @@ if st.checkbox(
             type_su = r["Type"] if pd.notna(r["Type"]) else ""
             suspensions.append(Suspension(
                 pd.Timestamp(r["Date"]).date(), int(r["Nombre"]),
-                TYPES_SUSPENSION.get(type_su, True), interets_reportes="reportés" in type_su,
+                TYPES_SUSPENSION.get(type_su, True), interets_reportes=type_su.endswith("reportés"),
             ))
     st.caption(
-        "Pendant une suspension du **capital seul**, l'échéance se limite aux intérêts (plus l'assurance et les frais). "
-        "Pendant une suspension du **capital et des intérêts**, rien n'est prélevé hors assurance et frais : les "
-        "intérêts sont ajoutés au capital restant dû (amortissement négatif dans le fichier Pennylane, comme pendant "
-        "un différé), et l'échéance est recalculée à la reprise. Avec des **intérêts reportés non capitalisés**, "
-        "le capital restant dû ne bouge pas : les intérêts de la suspension (à 0 dans l'échéancier) sont payés "
-        "après la reprise, en plus des intérêts normaux."
+        "**Type de suspension** :  \n"
+        "• **Capital seul** : l'échéance se limite aux intérêts (plus l'assurance et les frais).  \n"
+        "• **Capital + intérêts capitalisés** : rien n'est prélevé hors assurance et frais ; les intérêts sont ajoutés "
+        "au capital restant dû (amortissement négatif dans le fichier Pennylane, comme pendant un différé) et "
+        "l'échéance est recalculée à la reprise.  \n"
+        "• **Capital + intérêts reportés** : rien n'est prélevé hors assurance et frais ; le capital restant dû ne "
+        "bouge pas et les intérêts de la suspension (à 0 dans l'échéancier) sont payés après la reprise, en plus "
+        "des intérêts normaux."
     )
     if any(su.reporte for su in suspensions):
         interets_reportes_etales = st.radio(
