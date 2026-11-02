@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import calendar
 import math
-import re
 from dataclasses import dataclass, field, replace
 from datetime import date
 from io import BytesIO
@@ -848,53 +847,17 @@ def exporter_pennylane(p: ParametresPret, echeancier: pd.DataFrame) -> bytes:
     return sortie.getvalue()
 
 
-# Libellé d'une écriture de reclassement des intérêts (ex. « RECL INT EMPRUNT ») : un crédit qui n'est pas un déblocage.
-MOTIF_RECLASSEMENT = re.compile(r"RECL|\bINT\b|INT[EÉ]R[EÊ]T", re.IGNORECASE)
-
-
-def lire_grand_livre_complet(fichier) -> tuple[list[Deblocage], pd.DataFrame, pd.DataFrame]:
+def lire_grand_livre(fichier) -> tuple[list[Deblocage], pd.DataFrame]:
     """Lit un export « Grand livre » Pennylane du compte d'emprunt (colonnes Date, Débit, Crédit).
 
-    Retourne les déblocages (crédits), les remboursements constatés (débits) et les écritures de reclassement
-    des intérêts (crédits dont le libellé parle d'intérêts ou de reclassement : elles ne sont pas des déblocages,
-    elles sortent du compte 164 les intérêts compris dans les débits).
+    Retourne les déblocages (crédits) et les remboursements constatés (débits).
     """
     gl = pd.read_excel(fichier)
     gl["Date"] = pd.to_datetime(gl["Date"], dayfirst=True).dt.date
     gl[["Débit", "Crédit"]] = gl[["Débit", "Crédit"]].apply(pd.to_numeric, errors="coerce").fillna(0.0)
-    colonne = next((c for c in ("Libellé de pièce", "Libellé") if c in gl.columns), None)
-    libelles = gl[colonne].fillna("").astype(str) if colonne else pd.Series("", index=gl.index)
-    reclassement = libelles.str.contains(MOTIF_RECLASSEMENT) & (gl["Crédit"] > 0)
-    deblocages = [
-        Deblocage(r.Date, round(float(r.Crédit), 2)) for r, recl in zip(gl.itertuples(), reclassement) if r.Crédit > 0 and not recl
-    ]
+    deblocages = [Deblocage(r.Date, round(float(r.Crédit), 2)) for r in gl.itertuples() if r.Crédit > 0]
     remboursements = gl.loc[gl["Débit"] > 0, ["Date", "Débit"]].rename(columns={"Débit": "Capital remboursé (€)"})
-    reclassements = pd.DataFrame({
-        "Date": gl.loc[reclassement, "Date"], "Libellé": libelles[reclassement], "Montant (€)": gl.loc[reclassement, "Crédit"],
-    })
-    return deblocages, remboursements.reset_index(drop=True), reclassements.reset_index(drop=True)
-
-
-def lire_grand_livre(fichier) -> tuple[list[Deblocage], pd.DataFrame]:
-    """Déblocages et remboursements du grand livre (voir `lire_grand_livre_complet`)."""
-    deblocages, remboursements, _ = lire_grand_livre_complet(fichier)
-    return deblocages, remboursements
-
-
-def controle_reclassements(echeancier: pd.DataFrame, reclassements: pd.DataFrame) -> pd.DataFrame:
-    """Compare chaque reclassement des intérêts aux intérêts de l'échéancier sur la même période (depuis le
-    reclassement précédent, ou le début du prêt, jusqu'à sa date)."""
-    lignes, debut = [], None
-    for _, r in reclassements.sort_values("Date").iterrows():
-        jour, montant = r["Date"], round(float(r["Montant (€)"]), 2)
-        periode = echeancier[[(debut is None or d > debut) and d <= jour for d in echeancier["Date"]]]
-        interets = round(float(periode["Intérêt (€)"].sum()), 2)
-        lignes.append({
-            "Date": jour, "Reclassé (€)": montant, "Intérêts échéancier (€)": interets,
-            "Écart (€)": round(montant - interets, 2), "Du": periode["Date"].iloc[0] if not periode.empty else None,
-        })
-        debut = jour
-    return pd.DataFrame(lignes, columns=["Date", "Reclassé (€)", "Intérêts échéancier (€)", "Écart (€)", "Du"])
+    return deblocages, remboursements.reset_index(drop=True)
 
 
 def comparer(echeancier: pd.DataFrame, remboursements: pd.DataFrame) -> pd.DataFrame:

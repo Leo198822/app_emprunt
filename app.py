@@ -24,8 +24,7 @@ from echeancier import (
     diagnostic_controle,
     exporter_pennylane,
     fonds_insuffisants,
-    controle_reclassements,
-    lire_grand_livre_complet,
+    lire_grand_livre,
 )
 
 st.set_page_config(page_title="Échéancier Pennylane", page_icon="📅", layout="centered")
@@ -350,7 +349,7 @@ source = st.radio(
     key=cle("source"),
     horizontal=True,
 )
-deblocages, remboursements, reclassements = [], None, None
+deblocages, remboursements = [], None
 erreurs_saisie = []  # lignes de tableau illisibles (date non reconnue, montant manquant…)
 if source.startswith("Importer"):
     grand_livre = st.file_uploader(
@@ -360,7 +359,7 @@ if source.startswith("Importer"):
     )
     if grand_livre is not None:
         try:
-            importes, remboursements, reclassements = lire_grand_livre_complet(grand_livre)
+            importes, remboursements = lire_grand_livre(grand_livre)
         except Exception as erreur:  # fichier inattendu
             st.error(
                 "⛔ Lecture du grand livre impossible : vérifiez qu'il s'agit bien de l'export Excel (.xlsx) du grand "
@@ -379,20 +378,6 @@ if source.startswith("Importer"):
                 cle(f"deblocages_{grand_livre.name}_{grand_livre.size}_{st.session_state.get('versions_deblocages', 0)}"),
                 annulable=True,
             )
-            if not reclassements.empty:
-                st.info(
-                    "ℹ️ "
-                    + ("Écriture" if len(reclassements) == 1 else f"{len(reclassements)} écritures")
-                    + " de reclassement des intérêts écartée"
-                    + ("" if len(reclassements) == 1 else "s")
-                    + " des déblocages : "
-                    + " ; ".join(
-                        f"{r['Date'].strftime('%d/%m/%Y')} « {r['Libellé']} » {euros(r['Montant (€)'])}"
-                        for _, r in reclassements.iterrows()
-                    )
-                    + ". Les débits du compte comprennent donc les intérêts : ce reclassement est contrôlé sous "
-                    "l'échéancier."
-                )
 elif source.startswith("Saisir"):
     deblocages = editer_deblocages(
         pd.DataFrame({"Date": pd.Series(dtype="datetime64[ns]"), "Montant (€)": pd.Series(dtype="float")}), cle("saisie")
@@ -803,9 +788,7 @@ if remboursements is not None and not remboursements.empty:
     nature_initiale = diagnostic_controle(controle_initial)
     # Intérêts compris dans les débits du compte 164 : choix de l'utilisateur (affiché plus bas), par défaut
     # d'après ce que les débits contiennent.
-    # Un reclassement des intérêts au crédit du compte 164 montre que les débits comprennent les intérêts.
-    avec_reclassement = reclassements is not None and not reclassements.empty
-    choix_defaut_gl = CHOIX_INTERETS_GL[1 if contient(nature_initiale, "intérêts") or avec_reclassement else 0]
+    choix_defaut_gl = CHOIX_INTERETS_GL[1 if contient(nature_initiale, "intérêts") else 0]
     interets_inclus_gl = st.session_state.get(cle_interets_gl, choix_defaut_gl) == CHOIX_INTERETS_GL[1]
     grand_livre_applique = nature_initiale != "capital" and st.session_state.get(cle_appliquer, False)
     if grand_livre_applique:
@@ -1040,21 +1023,6 @@ else:
             )
     controle = sans_plantage(comparer, echeancier, remboursements)
     controle["Écart (€)"] = ecarts_controle(controle, nature, interets_inclus_gl)
-    if reclassements is not None and not reclassements.empty:
-        for _, r in controle_reclassements(echeancier, reclassements).iterrows():
-            periode = f"du {r['Du'].strftime('%d/%m/%Y')} " if r["Du"] is not None else ""
-            texte = (
-                f"Reclassement des intérêts du {r['Date'].strftime('%d/%m/%Y')} : {euros(r['Reclassé (€)'])} ; intérêts "
-                f"de l'échéancier {periode}au {r['Date'].strftime('%d/%m/%Y')} : {euros(r['Intérêts échéancier (€)'])}"
-            )
-            if abs(r["Écart (€)"]) <= 0.05:
-                st.success(f"✅ {texte}.")
-            else:
-                st.warning(
-                    f"⚠️ {texte} — écart de {euros(r['Écart (€)'])}. Vérifiez l'écriture de reclassement : si elle est "
-                    "trop forte, le capital restant dû au compte 164 est sous-évalué d'autant (et les intérêts en "
-                    "charge surévalués)."
-                )
     ecarts_restants = bool((controle["Écart (€)"].abs() > 0.02).any())
     with st.expander("Détail : grand livre / échéancier"):
         colonnes_detail = ["Date", "Capital remboursé (€)", "Amortissement (€)"]

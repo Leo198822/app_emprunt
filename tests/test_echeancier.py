@@ -25,8 +25,6 @@ from echeancier import (
     fonds_insuffisants,
     repartir_ecart,
     lire_grand_livre,
-    lire_grand_livre_complet,
-    controle_reclassements,
 )
 
 GRAND_LIVRE = Path(__file__).parent / "grand_livre_exemple.xlsx"
@@ -771,10 +769,17 @@ def test_grand_livre_interets_inclus():
 GRAND_LIVRE_CMB = Path(__file__).parent / "grand_livre_cmb_interets_inclus.xlsx"
 
 
+def deblocages_cmb():
+    """Crédits du grand livre, sans la ligne de reclassement des intérêts (777,71 € au 31/12/2025) : c'est à
+    l'utilisateur de supprimer les lignes qui ne sont pas des déblocages."""
+    deblocages, remboursements = lire_grand_livre(GRAND_LIVRE_CMB)
+    return [d for d in deblocages if d.date != date(2025, 12, 31)], remboursements
+
+
 def pret_cmb(**autres):
     """Prêt de 32 500 € à 3,55 % sur 48 mois, débloqué en 6 fois : 1re échéance (09/05/2025) d'intérêts seuls,
-    puis 48 échéances de 727,30 €. Débits du compte 164 = capital + intérêts, reclassés au 31/12."""
-    deblocages, _, _ = lire_grand_livre_complet(GRAND_LIVRE_CMB)
+    puis 48 échéances de 727,30 €. Débits du compte 164 = capital + intérêts."""
+    deblocages, _ = deblocages_cmb()
     return ParametresPret(
         capital=32_500, taux=3.55, nb_echeances=49, nb_echeances_differe=1, interets_differe_capitalises=False,
         date_premier_paiement=date(2025, 5, 9), jour_prelevement=9, deblocages=deblocages, echeance_imposee=727.30,
@@ -782,25 +787,22 @@ def pret_cmb(**autres):
     )
 
 
-def test_grand_livre_avec_reclassement_des_interets():
-    deblocages, remboursements, reclassements = lire_grand_livre_complet(GRAND_LIVRE_CMB)
-    assert len(deblocages) == 6 and round(sum(d.montant for d in deblocages), 2) == 32_500  # reclassement écarté
-    assert reclassements["Montant (€)"].tolist() == [777.71] and len(remboursements) == 8
+def test_grand_livre_tous_les_credits_sont_des_deblocages():
+    deblocages, remboursements = lire_grand_livre(GRAND_LIVRE_CMB)
+    assert len(deblocages) == 7 and len(remboursements) == 8  # y compris le reclassement, à supprimer à la main
+    assert len(deblocages_cmb()[0]) == 6 and round(sum(d.montant for d in deblocages_cmb()[0]), 2) == 32_500
 
 
 def test_capital_du_pret_complet_interets_sur_fonds_verses():
     """Méthode de la banque : capital de l'échéance constante du prêt complet, intérêts sur les fonds versés
     (jour du versement compris). Débits du grand livre reproduits au centime, sauf 0,13 € le 09/06/2025 (fonds
     du 16/05/2025 probablement en valeur au 15/05) et l'arrondi des intérêts du 09/05/2025."""
-    _, remboursements, reclassements = lire_grand_livre_complet(GRAND_LIVRE_CMB)
+    _, remboursements = deblocages_cmb()
     e = calculer_echeancier(pret_cmb(interets_fonds_verses=True, jour_versement_inclus=True))
     ecarts = (e["Échéance (€)"].iloc[:8].values - remboursements["Capital remboursé (€)"].values).round(2)
     assert list(ecarts) == [0.01, -0.13, 0, 0, 0, 0, 0, 0]
     assert (e["Amortissement (€)"].iloc[1:8] == [631.15, 633.02, 634.89, 636.77, 638.66, 640.55, 642.44]).all()
     assert e["Solde (€)"].iloc[-1] == 0 and len(e) == 49
-    # Le reclassement de 777,71 € dépasse de 400,12 € les intérêts de 2025 (377,59 €).
-    controle = controle_reclassements(e, reclassements)
-    assert controle["Intérêts échéancier (€)"].tolist() == [377.59] and controle["Écart (€)"].tolist() == [400.12]
     # Les autres modes ne reproduisent pas ces débits.
     for mode in ({}, {"echeance_proratisee": True}):
         autre = calculer_echeancier(pret_cmb(**mode))

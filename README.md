@@ -54,10 +54,6 @@ L'écran se remplit en quelques étapes ; l'échéancier se génère dès que le
    l'échéancier. En cas d'écart, l'interrupteur « Appliquer les montants du grand livre à l'échéancier »
    reprend le capital comptabilisé (hors assurance/frais s'ils ont été passés au 164) pour les échéances
    concernées, puis recalcule les échéances suivantes pour solder le prêt au terme.
-   **Reclassement des intérêts** : un crédit du compte 164 dont le libellé parle d'intérêts ou de
-   reclassement (ex. « RECL INT EMPRUNT » en OD au 31/12) n'est pas repris comme déblocage ; il est comparé
-   aux intérêts de l'échéancier sur la même période, et un écart est signalé (un reclassement trop fort
-   sous-évalue le capital restant dû au 164).
    Juste au-dessus, choisir ce que comprennent les débits du compte 164 :
    - *le capital seul (hors intérêts)* : chaque débit est repris comme capital remboursé ;
    - *le capital et les intérêts* : chaque débit est repris comme échéance (intérêts + capital), et le
