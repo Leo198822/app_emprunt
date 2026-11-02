@@ -78,12 +78,15 @@ L'écran se remplit en quelques étapes ; l'échéancier se génère dès que le
    l'échéance ; une échéance modifiée fixe le capital). Les lignes modifiées sont repérées par ✏️ ;
    « ↶ Annuler la dernière modification » revient à l'état précédant la dernière saisie (plusieurs fois
    de suite si besoin) ; « ↺ Tout annuler » revient à l'échéancier calculé. La dernière échéance solde toujours le capital.
-   **Ajouter ou supprimer des échéances** : sous le tableau, « ➕ Ajouter une échéance à la date du » insère une
-   échéance à sa date ; pour supprimer, cocher les lignes dans la colonne ☑ puis cliquer sur « 🗑️ Supprimer ».
-   L'échéancier est recalculé : l'échéance est répartie sur le nouveau nombre d'échéances, et une période
-   allongée ou raccourcie porte intérêt sur sa durée réelle (jours exacts / 365). Les échéances du différé ne
-   s'ajoutent ni ne se suppriment ici (modifier le nombre d'échéances de différé). Ces opérations s'annulent
-   comme les autres modifications (« Annuler la dernière modification », « Tout annuler »).
+   **Ajouter ou supprimer des échéances** : sous le tableau, « ➕ Ajouter une échéance le » insère une échéance
+   à sa date ; « 🗑️ Supprimer les échéances du » retire les dates choisies dans la liste ; « ↩ Rétablir des
+   échéances supprimées » (affiché s'il y en a) les remet. L'échéancier est recalculé : l'échéance est répartie
+   sur le nouveau nombre d'échéances, et une période allongée ou raccourcie porte intérêt sur sa durée réelle
+   (jours exacts / 365). Les échéances du différé ne s'ajoutent ni ne se suppriment ici (modifier le nombre
+   d'échéances de différé). Ces opérations s'annulent comme les autres modifications.
+   Dans le tableau, la 1re colonne repère les lignes modifiées (✏️) et ajoutées (➕) ; au-dessus, un résumé
+   compte les échéances modifiées, ajoutées et supprimées. L'échéancier ne se trie pas : un clic sur l'en-tête
+   d'une colonne est sans effet, et il n'a pas de barre d'outils (recherche, téléchargement CSV…).
    Partie « Contrôler l'échéancier avant téléchargement », en deux temps : 1. appliquer les montants du
    grand livre (si importé) ; 2. s'il reste des écarts, modifier directement l'échéancier. Le bouton de
    téléchargement est placé sous le tableau.
