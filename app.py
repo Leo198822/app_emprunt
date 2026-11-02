@@ -733,47 +733,6 @@ params = ParametresPret(
     suspension_allonge_duree=suspension_allonge,
     interets_reportes_etales=interets_reportes_etales,
 )
-# Ajustement sur un capital restant dû connu : calculé ici, avant l'échéancier, avec les valeurs saisies dans les
-# champs affichés plus bas (« Contrôler l'échéancier », n°2) ; les messages y sont affichés.
-cle_date_reference, cle_solde_reference = cle("date_reference"), cle("solde_reference")
-date_reference = st.session_state.get(cle_date_reference)
-solde_reference = st.session_state.get(cle_solde_reference)
-messages_ajustement = []  # (type de message, texte)
-derniere_date = dates_echeances(params)[-1]
-if date_reference and date_reference > derniere_date:
-    messages_ajustement.append(("error",
-        f"⛔ Ajustement impossible : la date saisie ({date_reference.strftime('%d/%m/%Y')}) est postérieure à la "
-        f"dernière échéance du prêt ({derniere_date.strftime('%d/%m/%Y')}). Vérifiez l'année."
-    ))
-elif date_reference and solde_reference is not None:
-    ajustement = sans_plantage(ajuster_sur_solde, params, date_reference, solde_reference)
-    if ajustement is None:
-        messages_ajustement.append(("error", "⛔ Ajustement impossible : la date saisie est antérieure à la 1re échéance."))
-    elif not ajustement.possible:
-        bas, haut = ajustement.fourchette or (ajustement.solde_obtenu, ajustement.solde_obtenu)
-        messages_ajustement.append(("error",
-            f"⛔ Ajustement impossible : à l'échéance du {ajustement.date_echeance.strftime('%d/%m/%Y')}, le capital "
-            + (f"restant dû ne peut être que de {euros(bas)}" if abs(haut - bas) < 0.01 else f"restant dû ne peut varier qu'entre {euros(bas)} et {euros(haut)}")
-            + f" avec ces paramètres (saisi : {euros(solde_reference)}). Vérifiez la date, le montant, le taux, le différé "
-            "ou l'échéance saisie. L'échéancier n'a pas été modifié."
-        ))
-    else:
-        params = ajustement.parametres
-        precision = abs(ajustement.solde_obtenu - solde_reference)
-        detail = (
-            f"intérêts ajoutés au capital pendant le différé : {euros(params.interets_capitalises_imposes)}"
-            if ajustement.levier == "intérêts capitalisés"
-            else f"échéance recalculée, assurance comprise : {euros(params.echeance_imposee)}"
-        )
-        message = (
-            f"Échéancier recalculé ({detail}). Capital restant dû après l'échéance du "
-            f"{ajustement.date_echeance.strftime('%d/%m/%Y')} : {euros(ajustement.solde_obtenu)}"
-        )
-        messages_ajustement.append(
-            ("success", message + " ✅") if precision <= 0.005
-            else ("warning", message + f" — le plus proche possible au centime (écart {euros(precision)}).")
-        )
-
 # Contrôle avec le grand livre : établi sur l'échéancier calculé ; si l'utilisateur choisit d'appliquer les
 # montants du grand livre, l'échéancier est régénéré avec le capital constaté.
 cle_appliquer = cle("appliquer_grand_livre")
@@ -833,6 +792,52 @@ def boutons_annulation(zone_derniere, zone_tout) -> None:
 
 if corrections:
     params = replace(params, corrections=corrections)
+
+# Ajustement sur un capital restant dû connu : calculé en dernier, sur l'ensemble des critères (grand livre appliqué
+# et modifications du tableau compris), pour que le solde visé soit celui de l'échéancier affiché. Valeurs saisies
+# dans les champs affichés plus bas (« Contrôler l'échéancier », n°2), où sont aussi affichés les messages.
+cle_date_reference, cle_solde_reference = cle("date_reference"), cle("solde_reference")
+date_reference = st.session_state.get(cle_date_reference)
+solde_reference = st.session_state.get(cle_solde_reference)
+messages_ajustement = []  # (type de message, texte)
+derniere_date = dates_echeances(params)[-1]
+if date_reference and date_reference > derniere_date:
+    messages_ajustement.append(("error",
+        f"⛔ Ajustement impossible : la date saisie ({date_reference.strftime('%d/%m/%Y')}) est postérieure à la "
+        f"dernière échéance du prêt ({derniere_date.strftime('%d/%m/%Y')}). Vérifiez l'année."
+    ))
+elif date_reference and solde_reference is not None:
+    ajustement = sans_plantage(ajuster_sur_solde, params, date_reference, solde_reference)
+    if ajustement is None:
+        messages_ajustement.append(("error", "⛔ Ajustement impossible : la date saisie est antérieure à la 1re échéance."))
+    elif not ajustement.possible:
+        bas, haut = ajustement.fourchette or (ajustement.solde_obtenu, ajustement.solde_obtenu)
+        messages_ajustement.append(("error",
+            f"⛔ Ajustement impossible : à l'échéance du {ajustement.date_echeance.strftime('%d/%m/%Y')}, le capital "
+            + (f"restant dû ne peut être que de {euros(bas)}" if abs(haut - bas) < 0.01 else f"restant dû ne peut varier qu'entre {euros(bas)} et {euros(haut)}")
+            + f" avec ces paramètres (saisi : {euros(solde_reference)}). Vérifiez la date, le montant, le taux, le différé "
+            "ou l'échéance saisie. L'échéancier n'a pas été modifié."
+        ))
+    else:
+        params = ajustement.parametres
+        precision = abs(ajustement.solde_obtenu - solde_reference)
+        detail = (
+            f"intérêts ajoutés au capital pendant le différé : {euros(params.interets_capitalises_imposes)}"
+            if ajustement.levier == "intérêts capitalisés"
+            else "échéance recalculée après les montants du grand livre ou vos modifications, hors assurance : "
+            f"{euros(params.echeance_apres_corrections)}"
+            if ajustement.levier == "échéance après les montants imposés"
+            else f"échéance recalculée, assurance comprise : {euros(params.echeance_imposee)}"
+        )
+        message = (
+            f"Échéancier recalculé ({detail}). Capital restant dû après l'échéance du "
+            f"{ajustement.date_echeance.strftime('%d/%m/%Y')} : {euros(ajustement.solde_obtenu)}"
+        )
+        messages_ajustement.append(
+            ("success", message + " ✅") if precision <= 0.005
+            else ("warning", message + f" — le plus proche possible au centime (écart {euros(precision)}).")
+        )
+
 
 if (
     params.echeance_imposee and type_remboursement == "Échéances constantes"

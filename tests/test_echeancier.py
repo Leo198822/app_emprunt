@@ -807,3 +807,20 @@ def test_capital_du_pret_complet_interets_sur_fonds_verses():
     for mode in ({}, {"echeance_proratisee": True}):
         autre = calculer_echeancier(pret_cmb(**mode))
         assert abs(autre["Échéance (€)"].iloc[1] - 671.27) > 50
+
+
+def test_ajustement_apres_grand_livre_et_modifications():
+    """L'ajustement sur un capital restant dû est calculé sur l'ensemble des critères : le grand livre appliqué et
+    les modifications du tableau restent en place, et le solde visé est celui de l'échéancier final."""
+    p = pret_banque(468.45)
+    _, remboursements = lire_grand_livre(GRAND_LIVRE)
+    grand_livre = remboursements.assign(**{"Capital remboursé (€)": remboursements["Capital remboursé (€)"] + 10})
+    p = replace(p, capital_impose=capital_constate(comparer(calculer_echeancier(p), grand_livre), None))
+    p = replace(p, corrections={date(2027, 1, 5): {"interet": 60.0}})
+    ajustement = ajuster_sur_solde(p, date(2027, 6, 5), 18_000)
+    assert ajustement.possible and ajustement.levier == "échéance après les montants imposés"
+    e = calculer_echeancier(ajustement.parametres)
+    assert solde_a_la_date(ajustement.parametres, date(2027, 6, 5))[1] == pytest.approx(18_000, abs=0.05)
+    assert (comparer(e, grand_livre)["Écart (€)"].dropna().abs() < 0.01).all()  # grand livre toujours appliqué
+    assert e[e["Date"] == date(2027, 1, 5)]["Intérêt (€)"].iloc[0] == 60.0  # modification conservée
+    assert e["Solde (€)"].iloc[-1] == 0

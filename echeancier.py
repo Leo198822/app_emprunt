@@ -100,6 +100,8 @@ class ParametresPret:
     # correction de capital, l'échéance est recalculée pour finir au terme
     capital_impose: dict[str, float] = field(default_factory=dict)  # « AAAA-MM » → capital remboursé constaté
     # (grand livre) ; après le dernier, l'échéance est recalculée pour finir au terme
+    echeance_apres_corrections: float | None = None  # échéance (intérêts + capital) après le dernier montant
+    # imposé (grand livre ou modification) ; None = recalculée pour finir au terme (fixée par l'ajustement)
     echeances_constatees: dict[str, float] = field(default_factory=dict)  # « AAAA-MM » → intérêts + capital
     # constatés (grand livre, intérêts inclus) : le capital vaut ce montant moins les intérêts calculés de la ligne
     anticipe_reduit_duree: bool = True  # après un remboursement partiel : True = durée réduite (échéance
@@ -351,6 +353,7 @@ class Anticipes:
     echeances: dict[int, float] = field(default_factory=dict)  # échéances (intérêts + capital) saisies, par échéance
     suspendues: dict[int, bool] = field(default_factory=dict)  # échéances suspendues (indice → capital seul ?)
     allonge: bool = True  # suspension : durée allongée (True) ou échéance recalculée à la reprise (False)
+    echeance_reprise: float | None = None  # échéance imposée après le dernier montant constaté ou corrigé
 
     def suspendre(self, k: int, interet: float) -> float | None:
         """Amortissement d'une échéance suspendue : 0 (capital seul, intérêts payés) ou intérêts ajoutés au
@@ -393,7 +396,7 @@ class Anticipes:
         """Après le dernier montant constaté ou corrigé (capital ou intérêts) : échéance recalculée sur le
         capital restant, jusqu'au terme."""
         if k in self.corriges and restant_apres > 0.005 and k < n - 1:
-            return echeance_pour(restant_apres, self.t, n - k - 1)
+            return self.echeance_reprise or echeance_pour(restant_apres, self.t, n - k - 1)
         return None
 
     def appliquer(self, k: int, a: float, restant: float) -> float:
@@ -588,6 +591,7 @@ def calculer(p: ParametresPret) -> Resultat:
         reduire_duree=p.anticipe_reduit_duree, t=t, allonge=p.suspension_allonge_duree,
         # Intérêts reportés : le capital ne bouge pas, comme pour une suspension du capital seul.
         suspendues={k: s.capital_inchange for k, s in suspendues.items()},
+        echeance_reprise=round(p.echeance_apres_corrections, 2) if p.echeance_apres_corrections else None,
     )
     # Échéance de l'offre : calculée sur sa durée, hors échéances suspendues ajoutées par l'allongement.
     n_offre = n - (p.nb_echeances_total - p.nb_echeances)
@@ -784,6 +788,12 @@ def ajuster_sur_solde(p: ParametresPret, jour: date, solde_cible: float, toleran
         # Une échéance plus forte réduit le capital restant dû ; au maximum, tout est remboursé d'un coup.
         haut = round((base + p.assurance_sur(base) + p.montant_total_autres_frais) * 100) + 1
         leviers.append(("échéance", False, 1, haut, lambda cts: replace(p, echeance_imposee=cts / 100)))
+        # Après des montants imposés (grand livre appliqué, modifications du tableau), l'échéance est recalculée :
+        # c'est alors elle qui fixe le capital restant dû aux dates suivantes.
+        leviers.append((
+            "échéance après les montants imposés", False, 1, haut,
+            lambda cts: replace(p, echeance_apres_corrections=cts / 100),
+        ))
 
     meilleur, extremes = None, []
     for nom, croissant, bas, haut, variante in leviers:
