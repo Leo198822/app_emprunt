@@ -10,6 +10,7 @@ from echeancier import (
     Deblocage,
     ParametresPret,
     RemboursementAnticipe,
+    Suspension,
     ajouter_mois,
     ajuster_sur_solde,
     calculer,
@@ -17,6 +18,7 @@ from echeancier import (
     capital_constate,
     comparer,
     dates_echeances,
+    dates_suspendues,
     diagnostic_controle,
     exporter_pennylane,
     fonds_insuffisants,
@@ -432,10 +434,105 @@ if len(deblocages) > 1 and premier_paiement and nb_echeances and type_remboursem
             label_visibility="collapsed",
         ).startswith("proratisées")
 
+# --- Suspensions d'échéances ------------------------------------------------------------
+TYPES_SUSPENSION = {
+    "Capital seul (intérêts payés)": True,
+    "Capital et intérêts (intérêts ajoutés au capital)": False,
+}
+etape = 3
+suspensions, suspension_allonge, erreurs_suspensions = [], True, []
+if st.checkbox(
+    "Le prêt a fait l'objet d'une **suspension d'échéances** (report, pause des remboursements)", key=cle("avec_suspension")
+):
+    st.header(f"{etape}. Suspension d'échéances", divider="gray")
+    etape += 1
+    saisie_s = editer_lignes(
+        pd.DataFrame({
+            "Date": pd.Series(dtype="datetime64[ns]"),
+            "Nombre": pd.Series(dtype="Int64"),
+            "Type": pd.Series(dtype="object"),
+        }),
+        cle("suspensions"),
+        {
+            "Date": st.column_config.DateColumn(
+                "1re échéance suspendue", format="DD/MM/YYYY", required=True,
+                help="Date de la 1re échéance non prélevée (ou date de début de la suspension).",
+            ),
+            "Nombre": st.column_config.NumberColumn(
+                "Nombre d'échéances", min_value=1, max_value=600, step=1, format="%d", required=True,
+                help="Nombre d'échéances consécutives suspendues.",
+            ),
+            "Type": st.column_config.SelectboxColumn(
+                "Suspension du…", options=list(TYPES_SUSPENSION), default=next(iter(TYPES_SUSPENSION)), required=True,
+                width="large",
+                help="Capital seul : seuls les intérêts (et l'assurance) sont prélevés. Capital et intérêts : rien n'est "
+                "prélevé hors assurance, les intérêts sont ajoutés au capital restant dû.",
+            ),
+        },
+        ["Date", "Nombre"],
+    )
+    for numero, (_, r) in enumerate(saisie_s.iterrows(), start=1):
+        date_ok, nombre_ok = pd.notna(r["Date"]), pd.notna(r["Nombre"])
+        if not date_ok and not nombre_ok:
+            continue  # ligne vide
+        if not date_ok:
+            erreurs_suspensions.append(f"ligne n°{numero} : la date de la 1re échéance suspendue est vide ou n'a pas été reconnue")
+        elif not 1990 <= pd.Timestamp(r["Date"]).year <= 2100:
+            erreurs_suspensions.append(f"ligne n°{numero} : la date du {pd.Timestamp(r['Date']).strftime('%d/%m/%Y')} n'est pas vraisemblable")
+        elif not nombre_ok or int(r["Nombre"]) < 1:
+            erreurs_suspensions.append(f"ligne n°{numero} : indiquez le nombre d'échéances suspendues")
+        else:
+            suspensions.append(Suspension(
+                pd.Timestamp(r["Date"]).date(), int(r["Nombre"]),
+                TYPES_SUSPENSION.get(r["Type"] if pd.notna(r["Type"]) else "", True),
+            ))
+    st.caption(
+        "Pendant une suspension du **capital seul**, l'échéance se limite aux intérêts (plus l'assurance et les frais). "
+        "Pendant une suspension du **capital et des intérêts**, rien n'est prélevé hors assurance et frais : les "
+        "intérêts sont ajoutés au capital restant dû (amortissement négatif dans le fichier Pennylane, comme pendant "
+        "un différé), et l'échéance est recalculée à la reprise."
+    )
+    suspension_allonge = st.radio(
+        "À la fin de la suspension…",
+        [
+            "la durée du prêt est allongée du nombre d'échéances suspendues",
+            "la durée du prêt est maintenue : l'échéance est recalculée sur les échéances restantes",
+        ],
+        key=cle("suspension_allonge"),
+    ).startswith("la durée du prêt est allongée")
+    if suspensions and premier_paiement and nb_echeances:
+        mois = PERIODICITES[periodicite]
+        echeances_offre = [ajouter_mois(premier_paiement, k * mois, premier_paiement.day) for k in range(int(nb_echeances))]
+        premiere_amortissement = echeances_offre[min(int(nb_differe), len(echeances_offre) - 1)]
+        for su in suspensions:
+            debut = next((k for k, d in enumerate(echeances_offre) if d >= su.date), None)
+            if debut is None:
+                erreurs_suspensions.append(
+                    f"la suspension du {su.date.strftime('%d/%m/%Y')} est postérieure à la dernière échéance "
+                    f"({echeances_offre[-1].strftime('%d/%m/%Y')})"
+                )
+            elif debut < int(nb_differe):
+                erreurs_suspensions.append(
+                    f"la suspension du {su.date.strftime('%d/%m/%Y')} commence pendant le différé : elle doit porter sur "
+                    f"des échéances de remboursement du capital (à partir du {premiere_amortissement.strftime('%d/%m/%Y')})"
+                )
+            elif not suspension_allonge and debut + su.nb_echeances > len(echeances_offre) - 1:
+                erreurs_suspensions.append(
+                    f"la suspension du {su.date.strftime('%d/%m/%Y')} ({su.nb_echeances} échéance(s)) atteint la dernière "
+                    f"échéance du prêt ({echeances_offre[-1].strftime('%d/%m/%Y')}) : avec une durée maintenue, il doit "
+                    "rester au moins une échéance pour rembourser le capital"
+                )
+    for erreur in erreurs_suspensions:
+        st.error(f"⛔ Suspension d'échéances : {erreur}.")
+# Nombre d'échéances de l'échéancier, allongé des échéances suspendues le cas échéant.
+nb_echeances_total = int(nb_echeances or 0) + (
+    sum(su.nb_echeances for su in suspensions) if suspension_allonge else 0
+)
+
 # --- Remboursements anticipés -----------------------------------------------------------
 anticipes, anticipe_reduit_duree, erreurs_anticipes = [], True, []
 if st.checkbox("Le prêt a fait l'objet d'un **remboursement anticipé**", key=cle("avec_anticipe")):
-    st.header("3. Remboursements anticipés", divider="gray")
+    st.header(f"{etape}. Remboursements anticipés", divider="gray")
     saisie_ra = editer_lignes(
         pd.DataFrame({
             "Date": pd.Series(dtype="datetime64[ns]"),
@@ -485,7 +582,7 @@ if st.checkbox("Le prêt a fait l'objet d'un **remboursement anticipé**", key=c
         ).startswith("l'échéance est maintenue")
     if anticipes and premier_paiement and nb_echeances:
         mois = PERIODICITES[periodicite]
-        derniere = ajouter_mois(premier_paiement, (int(nb_echeances) - 1) * mois, premier_paiement.day)
+        derniere = ajouter_mois(premier_paiement, (nb_echeances_total - 1) * mois, premier_paiement.day)
         premiere_amortissement = ajouter_mois(premier_paiement, int(nb_differe) * mois, premier_paiement.day)
         for ra in anticipes:
             if ra.date > derniere:
@@ -532,6 +629,9 @@ if source.startswith("Saisir") and not deblocages and not erreurs_saisie:
 if manquants:
     st.info("Pour générer l'échéancier, renseignez : " + ", ".join(manquants) + ".")
     st.stop()
+if erreurs_suspensions:
+    st.error("⛔ Échéancier non généré : corrigez les suspensions d'échéances (voir ci-dessus).")
+    st.stop()
 if erreurs_anticipes:
     st.error("⛔ Échéancier non généré : corrigez les remboursements anticipés (voir ci-dessus).")
     st.stop()
@@ -570,6 +670,8 @@ params = ParametresPret(
     echeance_proratisee=echeance_proratisee,
     remboursements_anticipes=anticipes,
     anticipe_reduit_duree=anticipe_reduit_duree,
+    suspensions=suspensions,
+    suspension_allonge_duree=suspension_allonge,
 )
 with st.expander("🎯 Ajuster sur un capital restant dû connu (facultatif)"):
     st.caption(
@@ -726,10 +828,24 @@ for jour_ra, montant_ra, indemnites_ra in resultat.anticipes:
         + (f", avec {euros(indemnites_ra)} d'indemnités (colonne Autres frais)" if indemnites_ra else "")
         + "."
     )
-if resultat.anticipes and len(echeancier) < params.nb_echeances:
+if resultat.anticipes and len(echeancier) < params.nb_echeances_total:
     st.info(
         f"Prêt soldé le {echeancier['Date'].iloc[-1].strftime('%d/%m/%Y')} : {len(echeancier)} échéances au lieu de "
-        f"{params.nb_echeances}."
+        f"{params.nb_echeances_total}."
+    )
+suspendues = dates_suspendues(params)
+if suspendues:
+    lignes_suspendues = echeancier[echeancier["Date"].isin(list(suspendues))]
+    ajoutes = round(-float(lignes_suspendues["Amortissement (€)"].clip(upper=0).sum()), 2)
+    st.info(
+        f"⏸️ {len(suspendues)} échéance{'s' if len(suspendues) > 1 else ''} suspendue{'s' if len(suspendues) > 1 else ''} "
+        f"({', '.join(d.strftime('%d/%m/%Y') for d in suspendues)})"
+        + (f" : {euros(ajoutes)} d'intérêts ajoutés au capital" if ajoutes else " : intérêts payés, capital non remboursé")
+        + (
+            f". Durée allongée : {params.nb_echeances_total} échéances au lieu de {params.nb_echeances}."
+            if params.suspension_allonge_duree
+            else ". Durée maintenue : l'échéance est recalculée à la reprise."
+        )
     )
 
 rang = resultat.rang_capital_solde
@@ -746,6 +862,7 @@ if rang < len(echeancier):
     )
 
 amortissement = echeancier.iloc[params.nb_echeances_differe : -1]
+amortissement = amortissement[~amortissement["Date"].isin(list(suspendues))]  # suspensions : pas de capital, c'est voulu
 if ((amortissement["Amortissement (€)"] <= 0) & (amortissement["Solde (€)"] > 0.005)).any():
     st.warning(
         f"⚠️ L'échéance est trop faible pour couvrir les intérêts : certaines échéances ne remboursent aucun capital, "
@@ -888,7 +1005,7 @@ if modifications:
         actuelle = echeancier.iloc[int(ligne)]
         jour = actuelle["Date"]
         correction = dict(corrections.get(jour, {}))
-        dans_differe = int(ligne) < params.nb_echeances_differe
+        dans_differe = int(ligne) < params.nb_echeances_differe or jour in suspendues  # pas de capital remboursé
         for colonne, valeur in valeurs.items():
             if valeur is not None and not 0 <= float(valeur) <= plafond_saisie:
                 refusees.append(f"{euros(float(valeur))} le {jour.strftime('%d/%m/%Y')}")
@@ -918,7 +1035,9 @@ if modifications:
             corrections.pop(jour, None)
     messages = []
     if ignorees:
-        messages.append("Pendant le différé, seuls les intérêts, l'assurance et les frais sont modifiables.")
+        messages.append(
+            "Pendant le différé ou une suspension d'échéances, seuls les intérêts, l'assurance et les frais sont modifiables."
+        )
     if refusees:
         messages.append(
             f"Montant{'s' if len(refusees) > 1 else ''} refusé{'s' if len(refusees) > 1 else ''} "

@@ -8,6 +8,8 @@ import pytest
 from echeancier import (
     capital_constate,
     RemboursementAnticipe,
+    Suspension,
+    dates_suspendues,
     plafond_interets_capitalises,
     solde_a_la_date,
     diagnostic_controle,
@@ -628,3 +630,60 @@ def test_ajustement_sur_un_solde_nul_solde_le_pret_a_la_date_indiquee():
     e = calculer_echeancier(ajustement.parametres)
     # Capital soldé à la dernière échéance avant la date (10/12/2027), pas avant : échéance la plus faible.
     assert e.loc[e["Date"] == date(2027, 11, 10), "Solde (€)"].iloc[0] > 0
+
+
+def pret_suspendu(capital_seul, allonge, **autres):
+    return ParametresPret(
+        capital=12_000, taux=3.0, nb_echeances=24, date_premier_paiement=date(2026, 1, 5), jour_prelevement=5,
+        suspensions=[Suspension(date(2026, 6, 1), 3, capital_seul)], suspension_allonge_duree=allonge, **autres,
+    )
+
+
+def test_suspension_du_capital_seul_allonge_la_duree_sans_changer_l_echeance():
+    sans = calculer_echeancier(replace(pret_suspendu(True, True), suspensions=[]))
+    e = calculer_echeancier(pret_suspendu(True, True))
+    assert len(e) == 27 and e["Solde (€)"].iloc[-1] == 0
+    suspendues = e.iloc[5:8]
+    assert (suspendues["Amortissement (€)"] == 0).all()
+    assert (suspendues["Échéance (€)"] == suspendues["Intérêt (€)"]).all()  # seuls les intérêts sont payés
+    # Échéance inchangée avant et après la suspension, et capital remboursé identique.
+    assert e["Échéance (€)"].iloc[8] == sans["Échéance (€)"].iloc[0] == e["Échéance (€)"].iloc[0]
+    assert round(e["Amortissement (€)"].sum(), 2) == 12_000
+
+
+def test_suspension_du_capital_et_des_interets_les_ajoute_au_capital():
+    e = calculer_echeancier(pret_suspendu(False, True))
+    suspendues = e.iloc[5:8]
+    assert (suspendues["Échéance (€)"] == 0).all()
+    assert (suspendues["Amortissement (€)"] == -suspendues["Intérêt (€)"]).all()
+    assert e["Solde (€)"].iloc[7] == round(e["Solde (€)"].iloc[4] + suspendues["Intérêt (€)"].sum(), 2)
+    assert len(e) == 27 and e["Solde (€)"].iloc[-1] == 0
+    assert e["Échéance (€)"].iloc[8] > e["Échéance (€)"].iloc[0]  # échéance recalculée à la reprise
+
+
+@pytest.mark.parametrize("capital_seul", [True, False])
+def test_suspension_a_duree_maintenue_recalcule_l_echeance(capital_seul):
+    e = calculer_echeancier(pret_suspendu(capital_seul, False))
+    assert len(e) == 24 and e["Solde (€)"].iloc[-1] == 0
+    assert e["Échéance (€)"].iloc[8] > e["Échéance (€)"].iloc[0]
+    assert abs(e["Échéance (€)"].iloc[-1] - e["Échéance (€)"].iloc[8]) < 1
+
+
+def test_suspension_en_amortissement_constant_et_dates():
+    p = pret_suspendu(True, True, type_remboursement="Amortissement constant")
+    e = calculer_echeancier(p)
+    assert len(e) == 27 and e["Solde (€)"].iloc[-1] == 0
+    assert (e["Amortissement (€)"].iloc[5:8] == 0).all() and e["Amortissement (€)"].iloc[8] == 500
+    assert list(dates_suspendues(p)) == [date(2026, 6, 5), date(2026, 7, 5), date(2026, 8, 5)]
+
+
+def test_suspension_en_echeances_proratisees_et_export(tmp_path):
+    p = ParametresPret(
+        capital=20_000, taux=4, nb_echeances=36, date_premier_paiement=date(2026, 1, 5), jour_prelevement=5,
+        deblocages=[Deblocage(date(2025, 12, 1), 10_000), Deblocage(date(2026, 3, 20), 10_000)],
+        echeance_proratisee=True, suspensions=[Suspension(date(2026, 7, 1), 2, False)],
+    )
+    e = calculer_echeancier(p)
+    assert len(e) == 38 and e["Solde (€)"].iloc[-1] == 0
+    assert (e["Échéance (€)"].iloc[6:8] == 0).all()
+    assert exporter_pennylane(p, e)

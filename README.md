@@ -50,12 +50,24 @@ L'écran se remplit en quelques étapes ; l'échéancier se génère dès que le
    l'échéancier. En cas d'écart, l'interrupteur « Appliquer les montants du grand livre à l'échéancier »
    reprend le capital comptabilisé (hors assurance/frais s'ils ont été passés au 164) pour les échéances
    concernées, puis recalcule les échéances suivantes pour solder le prêt au terme.
-3. **Remboursements anticipés (facultatif)** : case « Le prêt a fait l'objet d'un remboursement anticipé ».
+3. **Suspension d'échéances (facultatif)** : case « Le prêt a fait l'objet d'une suspension d'échéances ».
+   Pour chaque suspension : date de la 1re échéance suspendue, nombre d'échéances consécutives et type :
+   - *capital seul* : seuls les intérêts (plus l'assurance et les frais) sont prélevés, le capital restant dû
+     ne bouge pas ;
+   - *capital et intérêts* : rien n'est prélevé hors assurance et frais ; les intérêts de la période sont
+     ajoutés au capital restant dû (amortissement négatif dans le fichier Pennylane, comme pendant un différé).
+   À la fin de la suspension, au choix : *durée allongée* du nombre d'échéances suspendues (échéance inchangée
+   si seul le capital a été suspendu, recalculée sur le nouveau capital sinon), ou *durée maintenue*
+   (échéance recalculée sur les échéances restantes). Contrôles : une suspension ne peut pas commencer
+   pendant le différé ni après la dernière échéance, et, à durée maintenue, doit laisser au moins une
+   échéance de remboursement. Dans le tableau, les lignes suspendues n'acceptent que la modification des
+   intérêts, de l'assurance et des frais.
+4. **Remboursements anticipés (facultatif)** : case « Le prêt a fait l'objet d'un remboursement anticipé ».
    Pour chacun : date, capital remboursé (ou case « Total »), indemnités (IRA). Le remboursement est intégré
    à l'échéance qui suit sa date (Amortissement ; indemnités en Autres frais). Après un remboursement
    partiel : échéance maintenue (durée réduite) ou durée maintenue (échéance recalculée). Une fois le
    capital soldé par anticipation, l'échéancier s'arrête.
-4. **Modifier l'échéancier** : dans le tableau, double-cliquez sur un intérêt, une assurance, des frais, un
+5. **Modifier l'échéancier** : dans le tableau, double-cliquez sur un intérêt, une assurance, des frais, un
    capital ou une échéance et saisissez le montant voulu. L'échéancier est recalculé à chaque modification :
    les échéances suivantes sont ajustées pour solder le prêt au terme (un intérêt modifié conserve
    l'échéance ; une échéance modifiée fixe le capital). Les lignes modifiées sont repérées par ✏️ ;
@@ -64,7 +76,7 @@ L'écran se remplit en quelques étapes ; l'échéancier se génère dès que le
    Partie « Contrôler l'échéancier avant téléchargement », en deux temps : 1. appliquer les montants du
    grand livre (si importé) ; 2. s'il reste des écarts, modifier directement l'échéancier. Le bouton de
    téléchargement est placé sous le tableau.
-5. **Ajustement (facultatif)** : sous l'échéancier, saisir une date et le capital restant dû connu à
+6. **Ajustement (facultatif)** : sous l'échéancier, saisir une date et le capital restant dû connu à
    cette date (tableau de la banque, relevé…). L'échéancier est recalculé pour retomber exactement
    dessus : l'application ajuste les intérêts ajoutés au capital pendant le différé ou, sans différé,
    l'échéance.

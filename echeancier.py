@@ -12,7 +12,10 @@ Principe (constaté sur le grand livre d'un prêt Crédit Agricole à déblocage
   jusqu'au dernier déblocage ; le solde affiché est toujours le capital réellement versé à chaque date ;
 - **déblocage partiel** : l'échéancier porte sur le montant débloqué, soit avec l'échéance du prêt
   complet (le capital est soldé plus tôt ; les échéances suivantes restent jusqu'au terme, à 0 hors
-  assurance), soit avec une échéance réduite étalée sur toute la durée.
+  assurance), soit avec une échéance réduite étalée sur toute la durée ;
+- **suspension d'échéances** (report) pendant l'amortissement : soit du capital seul (les intérêts restent
+  payés), soit du capital et des intérêts (les intérêts sont ajoutés au capital, comme pendant un différé) ;
+  à la reprise, la durée est allongée du nombre d'échéances suspendues, ou maintenue (échéance recalculée).
 """
 
 from __future__ import annotations
@@ -50,6 +53,14 @@ class RemboursementAnticipe:
 
 
 @dataclass
+class Suspension:
+    date: date  # date de la 1re échéance suspendue (rattachée à la 1re échéance d'amortissement à cette date ou après)
+    nb_echeances: int = 1  # nombre d'échéances consécutives suspendues
+    capital_seul: bool = True  # True : seul le capital est suspendu, les intérêts sont payés ;
+    # False : capital et intérêts suspendus, les intérêts sont ajoutés au capital
+
+
+@dataclass
 class ParametresPret:
     capital: float  # montant emprunté (offre de prêt)
     taux: float  # taux nominal annuel en %
@@ -83,6 +94,19 @@ class ParametresPret:
     # False = durée maintenue, échéance recalculée sur le montant débloqué
     echeance_proratisee: bool = False  # déblocages après la 1re échéance : échéances réduites au prorata des
     # fonds versés jusqu'au dernier déblocage (False = échéances calculées sur la totalité du prêt)
+    suspensions: list[Suspension] = field(default_factory=list)  # échéances suspendues (report) en amortissement
+    suspension_allonge_duree: bool = True  # True : la durée est allongée du nombre d'échéances suspendues ;
+    # False : durée maintenue, l'échéance est recalculée à la reprise sur les échéances restantes
+
+    @property
+    def nb_echeances_suspendues(self) -> int:
+        return sum(max(int(s.nb_echeances), 0) for s in self.suspensions)
+
+    @property
+    def nb_echeances_total(self) -> int:
+        """Nombre d'échéances de l'échéancier : celles de l'offre, plus les échéances suspendues si la durée
+        est allongée."""
+        return self.nb_echeances + (self.nb_echeances_suspendues if self.suspension_allonge_duree else 0)
 
     @property
     def capital_effectif(self) -> float:
@@ -103,7 +127,7 @@ class ParametresPret:
 
     @property
     def nb_echeances_amortissement(self) -> int:
-        return self.nb_echeances - self.nb_echeances_differe
+        return self.nb_echeances_total - self.nb_echeances_differe
 
     @property
     def assurance_par_echeance(self) -> float:
@@ -155,7 +179,27 @@ def dates_echeances(p: ParametresPret) -> list[date]:
     premiere = ajouter_mois(p.date_premier_paiement, 0, p.jour_prelevement)
     if premiere < p.date_premier_paiement:
         premiere = ajouter_mois(premiere, 1, p.jour_prelevement)
-    return [ajouter_mois(premiere, k * p.mois_par_periode, p.jour_prelevement) for k in range(p.nb_echeances)]
+    return [ajouter_mois(premiere, k * p.mois_par_periode, p.jour_prelevement) for k in range(p.nb_echeances_total)]
+
+
+def indices_suspendus(p: ParametresPret, dates: list[date]) -> dict[int, bool]:
+    """Échéances d'amortissement suspendues (indice → capital seul ?). La dernière échéance, qui solde le
+    capital, n'est jamais suspendue."""
+    k0, suspendues = p.nb_echeances_differe, {}
+    n = len(dates) - k0
+    for s in sorted(p.suspensions, key=lambda s: s.date):
+        debut = next((j for j, d in enumerate(dates[k0:]) if d >= s.date), None)
+        if debut is None:
+            continue
+        for k in range(debut, min(debut + max(int(s.nb_echeances), 0), n - 1)):
+            suspendues[k] = s.capital_seul
+    return suspendues
+
+
+def dates_suspendues(p: ParametresPret) -> dict[date, bool]:
+    """Dates des échéances suspendues (date → capital seul ?)."""
+    dates = dates_echeances(p)
+    return {dates[p.nb_echeances_differe + k]: seul for k, seul in sorted(indices_suspendus(p, dates).items())}
 
 
 def repartir(total: float, n: int) -> list[float]:
@@ -234,6 +278,29 @@ class Anticipes:
     imposes: dict[int, float] = field(default_factory=dict)  # capital constaté (grand livre) ou corrigé, par échéance
     interets: dict[int, float] = field(default_factory=dict)  # intérêts corrigés par l'utilisateur, par échéance
     echeances: dict[int, float] = field(default_factory=dict)  # échéances (intérêts + capital) saisies, par échéance
+    suspendues: dict[int, bool] = field(default_factory=dict)  # échéances suspendues (indice → capital seul ?)
+    allonge: bool = True  # suspension : durée allongée (True) ou échéance recalculée à la reprise (False)
+
+    def suspendre(self, k: int, interet: float) -> float | None:
+        """Amortissement d'une échéance suspendue : 0 (capital seul, intérêts payés) ou intérêts ajoutés au
+        capital (amortissement négatif). None si l'échéance n'est pas suspendue."""
+        if k not in self.suspendues:
+            return None
+        return 0.0 if self.suspendues[k] else -interet
+
+    def fin_suspension(self, k: int) -> bool:
+        """Dernière échéance d'une suspension, après laquelle l'échéance doit être recalculée : toujours si la
+        durée est maintenue ou si des intérêts ont été ajoutés au capital (rien à recalculer si seul le capital
+        a été suspendu et la durée allongée d'autant)."""
+        if k not in self.suspendues or k + 1 in self.suspendues:
+            return False
+        return not self.allonge or not self.suspendues[k]
+
+    def apres_suspension(self, k: int, restant_apres: float, n: int) -> float | None:
+        """Échéance recalculée à la reprise après une suspension, pour solder le prêt au terme."""
+        if self.fin_suspension(k) and restant_apres > 0.005 and k < n - 1:
+            return echeance_pour(restant_apres, self.t, n - k - 1)
+        return None
 
     @property
     def corriges(self) -> set[int]:
@@ -288,17 +355,24 @@ def tableau_constant(
     lignes, restant, n = [], base, len(facteurs)
     for k, facteur in enumerate(facteurs):
         interet = anticipes.interet(k, round(restant * facteur, 2))
-        if k == n - 1:
-            a = restant
-            if abs(round(echeance - a, 2) - interet) <= 0.02 and round(echeance - a, 2) >= 0:
-                interet = round(echeance - a, 2)
+        suspendu = anticipes.suspendre(k, interet)
+        if suspendu is not None:
+            a = suspendu  # échéance suspendue : pas de capital remboursé
         else:
-            a = min(max(round(echeance - interet, 2), 0.0), restant)
-        a = anticipes.amortissement(k, a, restant, interet)
-        a = round(a + anticipes.appliquer(k, a, restant), 2)
+            if k == n - 1:
+                a = restant
+                if abs(round(echeance - a, 2) - interet) <= 0.02 and round(echeance - a, 2) >= 0:
+                    interet = round(echeance - a, 2)
+            else:
+                a = min(max(round(echeance - interet, 2), 0.0), restant)
+            a = anticipes.amortissement(k, a, restant, interet)
+            a = round(a + anticipes.appliquer(k, a, restant), 2)
         lignes.append((interet, a))
         restant = round(restant - a, 2)
-        echeance = anticipes.apres_constate(k, restant, n) or anticipes.nouvelle_echeance(k, restant, n) or echeance
+        echeance = (
+            anticipes.apres_suspension(k, restant, n) or anticipes.apres_constate(k, restant, n)
+            or anticipes.nouvelle_echeance(k, restant, n) or echeance
+        )
     return lignes
 
 
@@ -333,6 +407,16 @@ def tableau_proratise(
     lignes, restant, echeance_finale = [], base, None
     for k, (fin, facteur) in enumerate(zip(dates[k0 : k0 + n], facteurs)):
         reste_a_verser = non_verse(p, fin)
+        if k in anticipes.suspendues:
+            # Échéance suspendue : intérêts sur le capital réellement versé, payés ou ajoutés au capital.
+            interet = anticipes.interet(k, interet_reel(p, restant, debut, fin, facteur))
+            a = anticipes.suspendre(k, interet)
+            lignes.append((interet, a))
+            restant = round(restant - a, 2)
+            if anticipes.fin_suspension(k) and reste_a_verser <= 0.005:
+                echeance_finale = anticipes.apres_suspension(k, restant, n) or echeance_finale
+            debut = fin
+            continue
         if k == n - 1:
             interet, a = interet_reel(p, restant, debut, fin, facteur), restant
         elif reste_a_verser > 0.005 or non_verse(p, debut) > 0.005:
@@ -341,7 +425,9 @@ def tableau_proratise(
             a = min(max(round(round(echeance * (base - reste_a_verser) / base, 2) - interet, 2), 0.0), restant)
         else:
             if echeance_finale is None:
-                echeance_finale = echeance_pour(restant, p.taux_periodique, n - k)
+                # Durée allongée : les échéances suspendues à venir ne remboursent pas de capital.
+                a_venir = sum(1 for j in anticipes.suspendues if j >= k) if anticipes.allonge else 0
+                echeance_finale = echeance_pour(restant, p.taux_periodique, n - k - a_venir)
             interet = round(restant * facteur, 2)
             a = min(max(round(echeance_finale - interet, 2), 0.0), restant)
         interet = anticipes.interet(k, interet)
@@ -403,7 +489,12 @@ def calculer(p: ParametresPret) -> Resultat:
     base = round(p.capital_effectif + capitalises, 2)
 
     k0 = p.nb_echeances_differe
-    anticipes = Anticipes(reduire_duree=p.anticipe_reduit_duree, t=t)
+    anticipes = Anticipes(
+        reduire_duree=p.anticipe_reduit_duree, t=t, suspendues=indices_suspendus(p, dates),
+        allonge=p.suspension_allonge_duree,
+    )
+    # Échéance de l'offre : calculée sur sa durée, hors échéances suspendues ajoutées par l'allongement.
+    n_offre = n - (p.nb_echeances_total - p.nb_echeances)
     for ra in sorted(p.remboursements_anticipes, key=lambda r: r.date):
         # Rattaché à la 1re échéance d'amortissement à sa date ou après.
         k = next((j for j, d in enumerate(dates[k0:]) if d >= ra.date), None)
@@ -430,16 +521,18 @@ def calculer(p: ParametresPret) -> Resultat:
         and max(d.date for d in p.deblocages) > dates[p.nb_echeances_differe]
     )
     if p.type_remboursement == "Amortissement constant":
-        part = round(base / n, 2)
+        part = round(base / n_offre, 2)
         lignes_amort, restant = [], base
         for k, facteur in enumerate(facteurs):
             interet = anticipes.interet(k, round(restant * facteur, 2))
-            a = restant if k == n - 1 else min(part, restant)
-            a = anticipes.amortissement(k, a, restant, interet)
-            a = round(a + anticipes.appliquer(k, a, restant), 2)
+            a = anticipes.suspendre(k, interet)
+            if a is None:
+                a = restant if k == n - 1 else min(part, restant)
+                a = anticipes.amortissement(k, a, restant, interet)
+                a = round(a + anticipes.appliquer(k, a, restant), 2)
             lignes_amort.append((interet, a))
             restant = round(restant - a, 2)
-            dernier_constate = k in anticipes.corriges
+            dernier_constate = k in anticipes.corriges or anticipes.fin_suspension(k)
             if (dernier_constate or (k in anticipes.appliques and not anticipes.reduire_duree)) and k < n - 1:
                 part = round(restant / (n - k - 1), 2)  # amortissement réparti sur la durée restante
     else:
@@ -454,14 +547,14 @@ def calculer(p: ParametresPret) -> Resultat:
             ):
                 # Différé capitalisé : l'échéance de la banque fixe le capital amorti, donc les intérêts
                 # capitalisés — retenus seulement s'ils restent vraisemblables (entre 0 et le plafond).
-                calibre = calibrer_base(echeance, t, facteurs, p.remboursements_constates)
+                calibre = calibrer_base(echeance, t, facteurs[:n_offre], p.remboursements_constates)
                 if p.capital_effectif <= calibre <= p.capital_effectif + plafond:
                     base, capitalises = calibre, round(calibre - p.capital_effectif, 2)
         elif p.partiel and p.partiel_duree_reduite:
             # Échéance du prêt complet appliquée au montant débloqué : le remboursement s'arrête plus tôt.
-            echeance = echeance_pour(round(p.capital + capitalises, 2), t, n)
+            echeance = echeance_pour(round(p.capital + capitalises, 2), t, n_offre)
         else:
-            echeance = echeance_pour(base, t, n)
+            echeance = echeance_pour(base, t, n_offre)
         if proratise:
             lignes_amort = tableau_proratise(p, dates, base, echeance, facteurs, anticipes)
         else:
@@ -479,7 +572,7 @@ def calculer(p: ParametresPret) -> Resultat:
 
     # Capital soldé avant la fin (déblocage partiel, échéance maintenue) : les échéances suivantes
     # restent dans l'échéancier, à 0 hors assurance et frais, jusqu'au terme prévu du prêt.
-    frais = repartir(p.montant_total_autres_frais, p.nb_echeances)
+    frais = repartir(p.montant_total_autres_frais, len(dates))
     for k, ras in anticipes.par_echeance.items():  # indemnités de remboursement anticipé
         frais[k0 + k] = round(frais[k0 + k] + sum(ra.indemnites for ra in ras), 2)
     # Le tableau porte sur la totalité du prêt (échéance constante, comme la banque) ; le solde affiché est
