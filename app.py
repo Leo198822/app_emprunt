@@ -24,7 +24,8 @@ from echeancier import (
     diagnostic_controle,
     exporter_pennylane,
     fonds_insuffisants,
-    lire_grand_livre,
+    controle_reclassements,
+    lire_grand_livre_complet,
 )
 
 st.set_page_config(page_title="Échéancier Pennylane", page_icon="📅", layout="centered")
@@ -330,6 +331,12 @@ with st.expander("Options (assurance, frais, calcul des intérêts)"):
             format="%.2f",
         ) or 0.0
 
+    jour_versement_inclus = st.checkbox(
+        "Intérêts d'un déblocage : compter le jour du versement (du 2 au 9 = 8 jours au lieu de 7)",
+        key=cle("jour_versement_inclus"),
+        help="Pour les fonds versés en cours de période, certaines banques comptent les intérêts à partir du jour du "
+        "versement inclus. Cochez si les intérêts de la banque sont légèrement supérieurs à ceux calculés.",
+    )
     jours_exacts = st.checkbox(
         "Calculer les intérêts d'amortissement en jours exacts / 365 (au lieu de taux / 12)", key=cle("jours_exacts"),
         help="Les banques appliquent en général taux / 12 aux échéances d'amortissement.",
@@ -343,7 +350,7 @@ source = st.radio(
     key=cle("source"),
     horizontal=True,
 )
-deblocages, remboursements = [], None
+deblocages, remboursements, reclassements = [], None, None
 erreurs_saisie = []  # lignes de tableau illisibles (date non reconnue, montant manquant…)
 if source.startswith("Importer"):
     grand_livre = st.file_uploader(
@@ -353,7 +360,7 @@ if source.startswith("Importer"):
     )
     if grand_livre is not None:
         try:
-            importes, remboursements = lire_grand_livre(grand_livre)
+            importes, remboursements, reclassements = lire_grand_livre_complet(grand_livre)
         except Exception as erreur:  # fichier inattendu
             st.error(
                 "⛔ Lecture du grand livre impossible : vérifiez qu'il s'agit bien de l'export Excel (.xlsx) du grand "
@@ -372,6 +379,20 @@ if source.startswith("Importer"):
                 cle(f"deblocages_{grand_livre.name}_{grand_livre.size}_{st.session_state.get('versions_deblocages', 0)}"),
                 annulable=True,
             )
+            if not reclassements.empty:
+                st.info(
+                    "ℹ️ "
+                    + ("Écriture" if len(reclassements) == 1 else f"{len(reclassements)} écritures")
+                    + " de reclassement des intérêts écartée"
+                    + ("" if len(reclassements) == 1 else "s")
+                    + " des déblocages : "
+                    + " ; ".join(
+                        f"{r['Date'].strftime('%d/%m/%Y')} « {r['Libellé']} » {euros(r['Montant (€)'])}"
+                        for _, r in reclassements.iterrows()
+                    )
+                    + ". Les débits du compte comprennent donc les intérêts : ce reclassement est contrôlé sous "
+                    "l'échéancier."
+                )
 elif source.startswith("Saisir"):
     deblocages = editer_deblocages(
         pd.DataFrame({"Date": pd.Series(dtype="datetime64[ns]"), "Montant (€)": pd.Series(dtype="float")}), cle("saisie")
@@ -439,7 +460,7 @@ elif deblocages:
             "choisissez « partiellement » à l'étape 1 si une partie des fonds ne sera jamais versée."
         )
 
-echeance_proratisee = False
+echeance_proratisee = interets_fonds_verses = False
 if len(deblocages) > 1 and premier_paiement and nb_echeances and type_remboursement == "Échéances constantes":
     mois = PERIODICITES[periodicite]
     premiere_amortissement = ajouter_mois(premier_paiement, int(nb_differe) * mois, premier_paiement.day)
@@ -451,16 +472,20 @@ if len(deblocages) > 1 and premier_paiement and nb_echeances and type_remboursem
             f"({premiere_amortissement.strftime('%d/%m/%Y')}). Jusqu'au dernier déblocage "
             f"({max(d.date for d in tardifs).strftime('%d/%m/%Y')}), les échéances sont…"
         )
-        echeance_proratisee = st.radio(
+        mode_tardifs = st.radio(
             "Échéances avant le dernier déblocage",
             [
                 "totales : échéance constante, calculée sur la totalité du prêt dès la 1re échéance",
                 "proratisées : réduites au prorata des fonds déjà versés, puis recalculées après le dernier déblocage",
+                "capital du prêt complet, intérêts sur les seuls fonds versés : capital de l'échéance constante du prêt "
+                "complet, intérêts calculés sur les fonds déjà versés (échéance réduite jusqu'au dernier déblocage)",
             ],
             key=cle("echeance_proratisee"),
             index=1,  # proratisation par défaut, en fonction des dates de déblocage
             label_visibility="collapsed",
-        ).startswith("proratisées")
+        )
+        echeance_proratisee = mode_tardifs.startswith("proratisées")
+        interets_fonds_verses = mode_tardifs.startswith("capital du prêt complet")
 
 # --- Suspensions d'échéances ------------------------------------------------------------
 # Libellés courts : ils doivent tenir dans la colonne du tableau (le détail est expliqué sous le tableau).
@@ -713,6 +738,8 @@ params = ParametresPret(
     montant_debloque=montant_debloque,
     partiel_duree_reduite=duree_reduite,
     echeance_proratisee=echeance_proratisee,
+    interets_fonds_verses=interets_fonds_verses,
+    jour_versement_inclus=jour_versement_inclus,
     remboursements_anticipes=anticipes,
     anticipe_reduit_duree=anticipe_reduit_duree,
     suspensions=suspensions,
@@ -776,7 +803,9 @@ if remboursements is not None and not remboursements.empty:
     nature_initiale = diagnostic_controle(controle_initial)
     # Intérêts compris dans les débits du compte 164 : choix de l'utilisateur (affiché plus bas), par défaut
     # d'après ce que les débits contiennent.
-    choix_defaut_gl = CHOIX_INTERETS_GL[1 if contient(nature_initiale, "intérêts") else 0]
+    # Un reclassement des intérêts au crédit du compte 164 montre que les débits comprennent les intérêts.
+    avec_reclassement = reclassements is not None and not reclassements.empty
+    choix_defaut_gl = CHOIX_INTERETS_GL[1 if contient(nature_initiale, "intérêts") or avec_reclassement else 0]
     interets_inclus_gl = st.session_state.get(cle_interets_gl, choix_defaut_gl) == CHOIX_INTERETS_GL[1]
     grand_livre_applique = nature_initiale != "capital" and st.session_state.get(cle_appliquer, False)
     if grand_livre_applique:
@@ -1011,6 +1040,21 @@ else:
             )
     controle = sans_plantage(comparer, echeancier, remboursements)
     controle["Écart (€)"] = ecarts_controle(controle, nature, interets_inclus_gl)
+    if reclassements is not None and not reclassements.empty:
+        for _, r in controle_reclassements(echeancier, reclassements).iterrows():
+            periode = f"du {r['Du'].strftime('%d/%m/%Y')} " if r["Du"] is not None else ""
+            texte = (
+                f"Reclassement des intérêts du {r['Date'].strftime('%d/%m/%Y')} : {euros(r['Reclassé (€)'])} ; intérêts "
+                f"de l'échéancier {periode}au {r['Date'].strftime('%d/%m/%Y')} : {euros(r['Intérêts échéancier (€)'])}"
+            )
+            if abs(r["Écart (€)"]) <= 0.05:
+                st.success(f"✅ {texte}.")
+            else:
+                st.warning(
+                    f"⚠️ {texte} — écart de {euros(r['Écart (€)'])}. Vérifiez l'écriture de reclassement : si elle est "
+                    "trop forte, le capital restant dû au compte 164 est sous-évalué d'autant (et les intérêts en "
+                    "charge surévalués)."
+                )
     ecarts_restants = bool((controle["Écart (€)"].abs() > 0.02).any())
     with st.expander("Détail : grand livre / échéancier"):
         colonnes_detail = ["Date", "Capital remboursé (€)", "Amortissement (€)"]

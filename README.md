@@ -41,6 +41,10 @@ L'écran se remplit en quelques étapes ; l'échéancier se génère dès que le
      réellement versé, puis échéance recalculée après le dernier déblocage pour solder le prêt au terme ;
    - *totales* : échéance constante, calculée sur la totalité du prêt dès la 1re échéance, quelles que
      soient les dates des déblocages (cas du prêt n°141).
+   - *capital du prêt complet, intérêts sur les seuls fonds versés* : le capital de chaque échéance est celui
+     de l'échéance constante du prêt complet, mais les intérêts ne portent que sur les fonds déjà versés
+     (période pleine, ou jours pour les fonds versés pendant la période) ; l'échéance est donc réduite jusqu'au
+     dernier déblocage (cas d'un prêt CMB de 32 500 € à 3,55 % sur 48 mois, reproduit au centime).
 2. **Les déblocages** : import du grand livre du compte 164 exporté de Pennylane (recommandé : les
    remboursements comptabilisés servent aussi de contrôle ; les déblocages repérés s'affichent dans un
    tableau modifiable : double-clic pour corriger, cocher une ou plusieurs lignes puis bouton « 🗑️ Supprimer », ligne vide pour
@@ -50,6 +54,10 @@ L'écran se remplit en quelques étapes ; l'échéancier se génère dès que le
    l'échéancier. En cas d'écart, l'interrupteur « Appliquer les montants du grand livre à l'échéancier »
    reprend le capital comptabilisé (hors assurance/frais s'ils ont été passés au 164) pour les échéances
    concernées, puis recalcule les échéances suivantes pour solder le prêt au terme.
+   **Reclassement des intérêts** : un crédit du compte 164 dont le libellé parle d'intérêts ou de
+   reclassement (ex. « RECL INT EMPRUNT » en OD au 31/12) n'est pas repris comme déblocage ; il est comparé
+   aux intérêts de l'échéancier sur la même période, et un écart est signalé (un reclassement trop fort
+   sous-évalue le capital restant dû au 164).
    Juste au-dessus, choisir ce que comprennent les débits du compte 164 :
    - *le capital seul (hors intérêts)* : chaque débit est repris comme capital remboursé ;
    - *le capital et les intérêts* : chaque débit est repris comme échéance (intérêts + capital), et le
@@ -104,7 +112,7 @@ L'écran se remplit en quelques étapes ; l'échéancier se génère dès que le
 
 Le volet **Options**, placé entre l'étape 1 et l'étape 2, regroupe l'assurance (aucune, coût mensuel fixe en €
 ou % du capital restant dû), les autres frais (aucun, montant total ou % du montant emprunté) et le calcul des
-intérêts en jours exacts ; il est replié par défaut et chaque champ de saisie n'apparaît qu'une fois le mode choisi.
+intérêts en jours exacts, et l'option « compter le jour du versement » (intérêts d'un déblocage du 2 au 9 = 8 jours au lieu de 7, comme certaines banques) ; il est replié par défaut et chaque champ de saisie n'apparaît qu'une fois le mode choisi.
 Le bouton **Télécharger l'échéancier Pennylane** produit le fichier
 d'import (même structure que `modeles/Echeancier_type.xlsx`, dates au format jj/mm/aaaa).
 

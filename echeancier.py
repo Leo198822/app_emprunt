@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import calendar
 import math
+import re
 from dataclasses import dataclass, field, replace
 from datetime import date
 from io import BytesIO
@@ -109,6 +110,14 @@ class ParametresPret:
     # False = durée maintenue, échéance recalculée sur le montant débloqué
     echeance_proratisee: bool = False  # déblocages après la 1re échéance : échéances réduites au prorata des
     # fonds versés jusqu'au dernier déblocage (False = échéances calculées sur la totalité du prêt)
+    interets_fonds_verses: bool = False  # échéances totales : capital du tableau du prêt complet, mais intérêts
+    # sur les seuls fonds versés (période pleine, ou jours pour les fonds versés pendant la période)
+    jour_versement_inclus: bool = False  # prorata des jours d'un déblocage : le jour du versement compte
+    # (du 2 au 9 = 8 jours au lieu de 7)
+
+    def jours_depuis(self, versement: date, fin: date) -> int:
+        """Jours d'intérêts d'un déblocage jusqu'à l'échéance (jour du versement compris si l'option est cochée)."""
+        return (fin - versement).days + (1 if self.jour_versement_inclus else 0)
     suspensions: list[Suspension] = field(default_factory=list)  # échéances suspendues (report) en amortissement
     suspension_allonge_duree: bool = True  # True : la durée est allongée du nombre d'échéances suspendues ;
     # False : durée maintenue, l'échéance est recalculée à la reprise sur les échéances restantes
@@ -288,7 +297,7 @@ def interets_differe(p: ParametresPret, dates: list[date]) -> list[float]:
             if debut is not None and d.date <= debut:
                 interet += d.montant * t
             else:
-                interet += d.montant * r * (fin - d.date).days / BASE_JOURS
+                interet += d.montant * r * p.jours_depuis(d.date, fin) / BASE_JOURS
         interets.append(round(interet, 2))
         debut = fin
     return interets
@@ -450,7 +459,9 @@ def interet_reel(p: ParametresPret, crd_theorique: float, debut: date, fin: date
     """Intérêts d'une période sur le capital réellement versé : fonds versés avant la période sur la période
     entière, fonds versés pendant la période au prorata des jours jusqu'à l'échéance."""
     interet = (crd_theorique - non_verse(p, debut)) * facteur
-    interet += sum(d.montant * p.taux / 100 * (fin - d.date).days / BASE_JOURS for d in p.deblocages if debut < d.date <= fin)
+    interet += sum(
+        d.montant * p.taux / 100 * p.jours_depuis(d.date, fin) / BASE_JOURS for d in p.deblocages if debut < d.date <= fin
+    )
     return round(interet, 2)
 
 
@@ -506,6 +517,27 @@ def tableau_proratise(
             echeance_finale = anticipes.nouvelle_echeance(k, restant, n) or echeance_finale
         debut = fin
     return lignes
+
+
+def interets_sur_fonds_verses(
+    p: ParametresPret, dates: list[date], base: float, lignes: list[tuple[float, float]], facteurs: list[float],
+    anticipes: Anticipes,
+) -> list[tuple[float, float]]:
+    """Échéances totales, intérêts sur les fonds versés : le capital de chaque échéance reste celui du tableau du
+    prêt complet, mais tant que des fonds ne sont pas versés, les intérêts ne portent que sur le capital
+    réellement versé (période pleine pour les fonds déjà versés, jours exacts pour ceux versés pendant la
+    période). L'échéance prélevée est donc réduite d'autant jusqu'au dernier déblocage."""
+    k0 = p.nb_echeances_differe
+    debut = dates[k0 - 1] if k0 else ajouter_mois(dates[0], -p.mois_par_periode, p.jour_prelevement)
+    resultat, restant = [], base
+    for k, ((interet, a), fin, facteur) in enumerate(zip(lignes, dates[k0:], facteurs)):
+        fonds_en_attente = non_verse(p, debut) > 0.005 or any(debut < d.date <= fin for d in p.deblocages)
+        if fonds_en_attente and k not in anticipes.interets and k not in anticipes.suspendues:
+            interet = interet_reel(p, restant, debut, fin, facteur)
+        resultat.append((interet, a))
+        restant = round(restant - a, 2)
+        debut = fin
+    return resultat
 
 
 def echeance_pour(base: float, t: float, n: int) -> float:
@@ -628,6 +660,8 @@ def calculer(p: ParametresPret) -> Resultat:
             lignes_amort = tableau_proratise(p, dates, base, echeance, facteurs, anticipes)
         else:
             lignes_amort = tableau_constant(base, echeance, facteurs, anticipes)
+            if p.interets_fonds_verses and p.deblocages:
+                lignes_amort = interets_sur_fonds_verses(p, dates, base, lignes_amort, facteurs, anticipes)
     reportes = 0.0
     if any(s.reporte for s in suspendues.values()):
         lignes_amort, reportes = reporter_interets(
@@ -814,23 +848,60 @@ def exporter_pennylane(p: ParametresPret, echeancier: pd.DataFrame) -> bytes:
     return sortie.getvalue()
 
 
-def lire_grand_livre(fichier) -> tuple[list[Deblocage], pd.DataFrame]:
+# Libellé d'une écriture de reclassement des intérêts (ex. « RECL INT EMPRUNT ») : un crédit qui n'est pas un déblocage.
+MOTIF_RECLASSEMENT = re.compile(r"RECL|\bINT\b|INT[EÉ]R[EÊ]T", re.IGNORECASE)
+
+
+def lire_grand_livre_complet(fichier) -> tuple[list[Deblocage], pd.DataFrame, pd.DataFrame]:
     """Lit un export « Grand livre » Pennylane du compte d'emprunt (colonnes Date, Débit, Crédit).
 
-    Retourne les déblocages (crédits) et les remboursements de capital constatés (débits).
+    Retourne les déblocages (crédits), les remboursements constatés (débits) et les écritures de reclassement
+    des intérêts (crédits dont le libellé parle d'intérêts ou de reclassement : elles ne sont pas des déblocages,
+    elles sortent du compte 164 les intérêts compris dans les débits).
     """
     gl = pd.read_excel(fichier)
     gl["Date"] = pd.to_datetime(gl["Date"], dayfirst=True).dt.date
     gl[["Débit", "Crédit"]] = gl[["Débit", "Crédit"]].apply(pd.to_numeric, errors="coerce").fillna(0.0)
-    deblocages = [Deblocage(r.Date, round(float(r.Crédit), 2)) for r in gl.itertuples() if r.Crédit > 0]
+    colonne = next((c for c in ("Libellé de pièce", "Libellé") if c in gl.columns), None)
+    libelles = gl[colonne].fillna("").astype(str) if colonne else pd.Series("", index=gl.index)
+    reclassement = libelles.str.contains(MOTIF_RECLASSEMENT) & (gl["Crédit"] > 0)
+    deblocages = [
+        Deblocage(r.Date, round(float(r.Crédit), 2)) for r, recl in zip(gl.itertuples(), reclassement) if r.Crédit > 0 and not recl
+    ]
     remboursements = gl.loc[gl["Débit"] > 0, ["Date", "Débit"]].rename(columns={"Débit": "Capital remboursé (€)"})
-    return deblocages, remboursements.reset_index(drop=True)
+    reclassements = pd.DataFrame({
+        "Date": gl.loc[reclassement, "Date"], "Libellé": libelles[reclassement], "Montant (€)": gl.loc[reclassement, "Crédit"],
+    })
+    return deblocages, remboursements.reset_index(drop=True), reclassements.reset_index(drop=True)
+
+
+def lire_grand_livre(fichier) -> tuple[list[Deblocage], pd.DataFrame]:
+    """Déblocages et remboursements du grand livre (voir `lire_grand_livre_complet`)."""
+    deblocages, remboursements, _ = lire_grand_livre_complet(fichier)
+    return deblocages, remboursements
+
+
+def controle_reclassements(echeancier: pd.DataFrame, reclassements: pd.DataFrame) -> pd.DataFrame:
+    """Compare chaque reclassement des intérêts aux intérêts de l'échéancier sur la même période (depuis le
+    reclassement précédent, ou le début du prêt, jusqu'à sa date)."""
+    lignes, debut = [], None
+    for _, r in reclassements.sort_values("Date").iterrows():
+        jour, montant = r["Date"], round(float(r["Montant (€)"]), 2)
+        periode = echeancier[[(debut is None or d > debut) and d <= jour for d in echeancier["Date"]]]
+        interets = round(float(periode["Intérêt (€)"].sum()), 2)
+        lignes.append({
+            "Date": jour, "Reclassé (€)": montant, "Intérêts échéancier (€)": interets,
+            "Écart (€)": round(montant - interets, 2), "Du": periode["Date"].iloc[0] if not periode.empty else None,
+        })
+        debut = jour
+    return pd.DataFrame(lignes, columns=["Date", "Reclassé (€)", "Intérêts échéancier (€)", "Écart (€)", "Du"])
 
 
 def comparer(echeancier: pd.DataFrame, remboursements: pd.DataFrame) -> pd.DataFrame:
     """Rapproche le capital remboursé en comptabilité de l'amortissement calculé, mois par mois."""
     colonnes = ["Date", "Intérêt (€)", "Amortissement (€)", "Assurance (€)", "Autres frais (€)", "Échéance (€)"]
-    calc = echeancier[echeancier["Amortissement (€)"] > 0][colonnes].copy()
+    # Échéances qui remboursent du capital, ou intérêts du différé prélevés (débit possible au compte 164).
+    calc = echeancier[(echeancier["Amortissement (€)"] > 0) | (echeancier["Échéance (€)"] > 0)][colonnes].copy()
     calc["Mois"] = [d.strftime("%Y-%m") for d in calc["Date"]]
     reel = remboursements.copy()
     reel["Mois"] = [d.strftime("%Y-%m") for d in reel["Date"]]
@@ -875,7 +946,7 @@ def ecarts_controle(controle: pd.DataFrame, nature: str | None, interets_inclus:
         attendu += controle["Assurance (€)"]
     if contient(nature, "frais"):
         attendu += controle["Autres frais (€)"]
-    return (controle["Capital remboursé (€)"] - attendu).round(2)
+    return (controle["Capital remboursé (€)"] - attendu).round(2) + 0.0  # + 0.0 : pas de « -0,00 »
 
 
 def diagnostic_controle(controle: pd.DataFrame) -> str | None:
