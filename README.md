@@ -78,6 +78,12 @@ L'écran se remplit en quelques étapes ; l'échéancier se génère dès que le
    l'échéance ; une échéance modifiée fixe le capital). Les lignes modifiées sont repérées par ✏️ ;
    « ↶ Annuler la dernière modification » revient à l'état précédant la dernière saisie (plusieurs fois
    de suite si besoin) ; « ↺ Tout annuler » revient à l'échéancier calculé. La dernière échéance solde toujours le capital.
+   **Ajouter ou supprimer des échéances** : sous le tableau, « ➕ Ajouter une échéance à la date du » insère une
+   échéance à sa date ; pour supprimer, cocher les lignes dans la colonne ☑ puis cliquer sur « 🗑️ Supprimer ».
+   L'échéancier est recalculé : l'échéance est répartie sur le nouveau nombre d'échéances, et une période
+   allongée ou raccourcie porte intérêt sur sa durée réelle (jours exacts / 365). Les échéances du différé ne
+   s'ajoutent ni ne se suppriment ici (modifier le nombre d'échéances de différé). Ces opérations s'annulent
+   comme les autres modifications (« Annuler la dernière modification », « Tout annuler »).
    Partie « Contrôler l'échéancier avant téléchargement », en deux temps : 1. appliquer les montants du
    grand livre (si importé) ; 2. s'il reste des écarts, modifier directement l'échéancier. Le bouton de
    téléchargement est placé sous le tableau.
@@ -141,6 +147,11 @@ Règles déduites du grand livre d'un prêt Crédit Agricole à déblocages succ
   - *% du capital restant dû* : taux annuel appliqué au capital restant dû en début de période
     (× nombre de mois / 12) ; l'assurance diminue avec le capital et s'arrête quand il est soldé.
 - Autres frais : répartis également sur toutes les échéances.
+
+## Saisie dans les tableaux
+
+La cellule en cours de saisie d'un tableau (date, montant, liste) s'affiche par-dessus la page : elle est recalée
+à chaque défilement pour rester sur sa ligne (auparavant, elle restait fixe à l'écran quand la page défilait).
 
 ## Traduction automatique du navigateur
 

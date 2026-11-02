@@ -119,8 +119,8 @@ class ParametresPret:
 
     @property
     def nb_echeances_total(self) -> int:
-        """Nombre d'échéances de l'échéancier : celles de l'offre, plus les échéances suspendues si la durée
-        est allongée."""
+        """Nombre d'échéances prévues : celles de l'offre, plus les échéances suspendues si la durée est allongée
+        (avant les lignes ajoutées ou supprimées par l'utilisateur, voir `dates_echeances`)."""
         return self.nb_echeances + (self.nb_echeances_suspendues if self.suspension_allonge_duree else 0)
 
     @property
@@ -142,7 +142,7 @@ class ParametresPret:
 
     @property
     def nb_echeances_amortissement(self) -> int:
-        return self.nb_echeances_total - self.nb_echeances_differe
+        return len(dates_echeances(self)) - self.nb_echeances_differe
 
     @property
     def assurance_par_echeance(self) -> float:
@@ -195,7 +195,15 @@ def dates_echeances(p: ParametresPret) -> list[date]:
     premiere = ajouter_mois(p.date_premier_paiement, 0, p.jour_prelevement)
     if premiere < p.date_premier_paiement:
         premiere = ajouter_mois(premiere, 1, p.jour_prelevement)
-    return [ajouter_mois(premiere, k * p.mois_par_periode, p.jour_prelevement) for k in range(p.nb_echeances_total)]
+    prevues = [ajouter_mois(premiere, k * p.mois_par_periode, p.jour_prelevement) for k in range(p.nb_echeances_total)]
+    # Lignes ajoutées ou supprimées par l'utilisateur dans l'échéancier (corrections « ajoutee » / « supprimee ») ;
+    # les échéances du différé ne changent pas.
+    k0 = p.nb_echeances_differe
+    supprimees = {d for d, c in p.corrections.items() if c.get("supprimee")}
+    ajoutees = {d for d, c in p.corrections.items() if c.get("ajoutee") and (not k0 or d > prevues[k0 - 1])}
+    if not supprimees and not ajoutees:
+        return prevues
+    return prevues[:k0] + sorted((set(prevues[k0:]) - supprimees) | ajoutees)
 
 
 def indices_suspendus(p: ParametresPret, dates: list[date]) -> dict[int, Suspension]:
@@ -307,11 +315,17 @@ def repartir_ecart(montants: list[float], total: float) -> list[float]:
 
 def facteurs_interets(p: ParametresPret, dates: list[date]) -> list[float]:
     """Taux d'intérêt de chaque période d'amortissement : taux périodique (ou jours exacts / 365)."""
-    if not p.interets_jours_exacts:
-        return [p.taux_periodique] * p.nb_echeances_amortissement
     r, k0 = p.taux / 100, p.nb_echeances_differe
     debuts = [dates[k0 - 1] if k0 else ajouter_mois(dates[0], -p.mois_par_periode, p.jour_prelevement)] + dates[k0:-1]
-    return [r * (fin - debut).days / BASE_JOURS for debut, fin in zip(debuts, dates[k0:])]
+    if p.interets_jours_exacts:
+        return [r * (fin - debut).days / BASE_JOURS for debut, fin in zip(debuts, dates[k0:])]
+    # Taux périodique ; une période allongée ou raccourcie par une échéance ajoutée ou supprimée dans le tableau
+    # porte intérêt sur sa durée réelle (jours exacts / 365).
+    return [
+        p.taux_periodique if fin == ajouter_mois(debut, p.mois_par_periode, p.jour_prelevement)
+        else r * (fin - debut).days / BASE_JOURS
+        for debut, fin in zip(debuts, dates[k0:])
+    ]
 
 
 @dataclass

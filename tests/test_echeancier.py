@@ -713,3 +713,25 @@ def test_interets_reportes_payes_en_une_fois_a_la_reprise():
     e, capital_seul = r.echeancier, calculer_echeancier(pret_suspendu(True, True))
     assert e["Intérêt (€)"].iloc[8] == round(capital_seul["Intérêt (€)"].iloc[8] + r.interets_reportes, 2)
     assert (e["Intérêt (€)"].iloc[9:] == capital_seul["Intérêt (€)"].iloc[9:]).all()
+
+
+def test_ajouter_et_supprimer_des_echeances():
+    p = pret_suspendu(True, True, )
+    p = replace(p, suspensions=[])
+    base = calculer_echeancier(p)
+    # Échéance supprimée : 23 échéances, période de 2 mois au taux de la durée réelle, prêt soldé.
+    e = calculer_echeancier(replace(p, corrections={date(2026, 6, 5): {"supprimee": True}}))
+    assert len(e) == 23 and date(2026, 6, 5) not in set(e["Date"]) and e["Solde (€)"].iloc[-1] == 0
+    assert e["Échéance (€)"].iloc[0] > base["Échéance (€)"].iloc[0]
+    deux_mois = e[e["Date"] == date(2026, 7, 5)].iloc[0]
+    precedent = e[e["Date"] == date(2026, 5, 5)].iloc[0]
+    assert deux_mois["Intérêt (€)"] == round(precedent["Solde (€)"] * 0.03 * 61 / 365, 2)
+    # Échéance ajoutée : 25 échéances, insérée à sa date.
+    e = calculer_echeancier(replace(p, corrections={date(2026, 6, 20): {"ajoutee": True}}))
+    assert len(e) == 25 and list(e["Date"]) == sorted(e["Date"]) and e["Solde (€)"].iloc[-1] == 0
+    assert e["Échéance (€)"].iloc[0] < base["Échéance (€)"].iloc[0]
+
+
+def test_les_echeances_du_differe_ne_sont_ni_ajoutees_ni_supprimees():
+    p = replace(pret_banque(), corrections={date(2026, 1, 5): {"supprimee": True}, date(2026, 2, 20): {"ajoutee": True}})
+    assert len(calculer_echeancier(p)) == 60

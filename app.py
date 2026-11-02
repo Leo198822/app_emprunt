@@ -41,6 +41,32 @@ st.html(
         meta.content = "notranslate";
         window.parent.document.head.appendChild(meta);
     }
+    // Tableaux modifiables : la cellule en cours de saisie (affichée par-dessus la page) restait fixe à l'écran
+    // quand on faisait défiler la page ; elle est décalée du même défilement pour rester sur sa ligne.
+    const doc = window.parent.document;
+    if (!doc.__celluleSuitDefilement) {
+        doc.__celluleSuitDefilement = true;
+        const positions = new WeakMap();
+        doc.addEventListener("scroll", (evenement) => {
+            const zone = evenement.target === doc ? doc.scrollingElement : evenement.target;
+            if (!zone || zone.closest?.("#portal")) return;
+            const avant = positions.has(zone) ? positions.get(zone) : zone.scrollTop;
+            positions.set(zone, zone.scrollTop);
+            const decalage = zone.scrollTop - avant;
+            if (!decalage) return;
+            doc.querySelectorAll("#portal .gdg-style").forEach((cellule) => {
+                const total = (parseFloat(cellule.dataset.decalage || "0") || 0) + decalage;
+                cellule.dataset.decalage = String(total);
+                cellule.style.translate = `0 ${-total}px`;
+            });
+        }, true);
+        // Mémorise la position de défilement avant toute saisie, pour calculer le premier décalage.
+        doc.addEventListener("pointerdown", () => {
+            const zone = doc.querySelector('[data-testid="stMain"]');
+            if (zone) positions.set(zone, zone.scrollTop);
+            if (doc.scrollingElement) positions.set(doc.scrollingElement, doc.scrollingElement.scrollTop);
+        }, true);
+    }
     </script>""",
     unsafe_allow_javascript=True,
 )
@@ -846,10 +872,10 @@ for jour_ra, montant_ra, indemnites_ra in resultat.anticipes:
         + (f", avec {euros(indemnites_ra)} d'indemnités (colonne Autres frais)" if indemnites_ra else "")
         + "."
     )
-if resultat.anticipes and len(echeancier) < params.nb_echeances_total:
+if resultat.anticipes and len(echeancier) < len(dates_echeances(params)):
     st.info(
         f"Prêt soldé le {echeancier['Date'].iloc[-1].strftime('%d/%m/%Y')} : {len(echeancier)} échéances au lieu de "
-        f"{params.nb_echeances_total}."
+        f"{len(dates_echeances(params))}."
     )
 suspendues = dates_suspendues(params)
 if suspendues:
@@ -989,18 +1015,29 @@ st.info(
     "✏️ Double-cliquez sur un **intérêt**, une **assurance**, des **frais**, un **capital** ou une **échéance**, "
     "saisissez le bon montant puis appuyez sur Entrée. L'échéancier est recalculé aussitôt : les échéances "
     "suivantes sont ajustées pour solder le prêt au terme (un intérêt modifié conserve l'échéance ; une échéance "
-    "modifiée fixe le capital)."
+    "modifiée fixe le capital).  \n"
+    "➕ **Ajouter une échéance** : choisissez sa date sous le tableau.  \n"
+    "🗑️ **Supprimer des échéances** : cochez-les dans la colonne ☑ puis cliquez sur « 🗑️ Supprimer ».  \n"
+    "Le tableau est alors recalculé (échéance répartie sur le nouveau nombre d'échéances)."
 )
+nb_ajoutees = sum(1 for c in corrections.values() if c.get("ajoutee"))
+nb_supprimees = sum(1 for c in corrections.values() if c.get("supprimee"))
 if corrections or historique:
     consignes, zone_derniere, zone_tout = st.columns([2, 1.3, 1], vertical_alignment="center")
     if corrections:
-        consignes.caption(f"✏️ {len(corrections)} ligne(s) modifiée(s), repérée(s) dans la 1re colonne.")
+        consignes.caption(
+            "✏️ " + ", ".join(filter(None, [
+                f"{len(corrections) - nb_supprimees} ligne(s) modifiée(s) ou ajoutée(s), repérée(s) dans la colonne ✏️"
+                if len(corrections) > nb_supprimees else "",
+                f"{nb_supprimees} échéance(s) supprimée(s)" if nb_supprimees else "",
+            ])) + "."
+        )
     boutons_annulation(zone_derniere, zone_tout)
 if message_tableau := st.session_state.pop(cle_corrections + "_message", None):
     st.warning(f"⚠️ {message_tableau}")
 version_tableau = st.session_state.setdefault(cle_corrections + "_version", 0)
 cle_tableau = f"{cle_corrections}_tableau_{version_tableau}"
-affiche = echeancier.assign(Modifiée=[d in corrections for d in echeancier["Date"]])
+affiche = echeancier.assign(Modifiée=[d in corrections for d in echeancier["Date"]], Sélection=False)
 st.data_editor(
     affiche,
     key=cle_tableau,
@@ -1008,10 +1045,11 @@ st.data_editor(
     hide_index=True,
     height=420,
     num_rows="fixed",
-    column_order=["Modifiée", "Date", *COLONNES_MODIFIABLES, "Échéance (€)", "Solde (€)"],
+    column_order=["Sélection", "Modifiée", "Date", *COLONNES_MODIFIABLES, "Échéance (€)", "Solde (€)"],
     disabled=["Modifiée", "Date", "Solde (€)"],
     column_config={
-        "Modifiée": st.column_config.CheckboxColumn("✏️", width=35, help="Ligne modifiée par vous"),
+        "Sélection": st.column_config.CheckboxColumn("☑", width=35, help="Cochez les échéances à supprimer"),
+        "Modifiée": st.column_config.CheckboxColumn("✏️", width=35, help="Ligne modifiée ou ajoutée par vous"),
         "Date": st.column_config.DateColumn("Date", format="DD/MM/YYYY", width=90),
         "Intérêt (€)": st.column_config.NumberColumn("Intérêt", min_value=0.0, format="%.2f", width=80),
         "Assurance (€)": st.column_config.NumberColumn("Assurance", min_value=0.0, format="%.2f", width=85),
@@ -1021,7 +1059,62 @@ st.data_editor(
         "Solde (€)": st.column_config.NumberColumn("Solde", format="%.2f", width=95),
     },
 )
+barre_suppression = st.container()  # bouton 🗑️, sous le tableau (au-dessus, la barre d'outils le masque)
 modifications = st.session_state.get(cle_tableau, {}).get("edited_rows", {})
+# Cases ☑ cochées : servent à la suppression, pas à modifier les montants (pas de recalcul).
+cochees = [int(ligne) for ligne, valeurs in modifications.items() if valeurs.get("Sélection")]
+modifications = {
+    ligne: {c: v for c, v in valeurs.items() if c != "Sélection"}
+    for ligne, valeurs in modifications.items()
+    if any(c != "Sélection" for c in valeurs)
+}
+
+
+def enregistrer(nouvelles: dict, message: str | None = None) -> None:
+    """Remplace les corrections (historique pour « Annuler ») et recharge le tableau."""
+    historique.append({jour: dict(valeurs) for jour, valeurs in corrections.items()})
+    corrections.clear()
+    corrections.update(nouvelles)
+    if message:
+        st.session_state[cle_corrections + "_message"] = message
+    st.session_state[cle_corrections + "_version"] = version_tableau + 1
+
+
+with barre_suppression:
+    texte, bouton = st.columns([3, 1], vertical_alignment="center")
+    if bouton.button(
+        f"🗑️ Supprimer ({len(cochees)})" if cochees else "🗑️ Supprimer",
+        key=cle("supprimer_echeances"),
+        disabled=not cochees,
+        help="Supprime les échéances cochées (colonne ☑)" if cochees else "Cochez d'abord une ou plusieurs échéances (colonne ☑)",
+        width="stretch",
+    ):
+        differe = [k for k in cochees if k < params.nb_echeances_differe]
+        a_supprimer = [k for k in cochees if k >= params.nb_echeances_differe]
+        if len(echeancier) - params.nb_echeances_differe - len(a_supprimer) < 1:
+            st.session_state[cle_corrections + "_message"] = (
+                "Suppression impossible : il doit rester au moins une échéance de remboursement du capital."
+            )
+            st.session_state[cle_corrections + "_version"] = version_tableau + 1
+        else:
+            nouvelles = {jour: dict(valeurs) for jour, valeurs in corrections.items()}
+            for k in a_supprimer:
+                jour = echeancier["Date"].iloc[k]
+                if nouvelles.get(jour, {}).get("ajoutee"):
+                    nouvelles.pop(jour)  # ligne ajoutée par l'utilisateur : simplement retirée
+                else:
+                    nouvelles[jour] = {"supprimee": True}
+            enregistrer(
+                nouvelles,
+                "Les échéances du différé ne peuvent pas être supprimées : modifiez le nombre d'échéances de différé "
+                "à l'étape 1." if differe else None,
+            )
+        st.rerun()
+    texte.caption(
+        f"{len(cochees)} échéance(s) cochée(s) : cliquez sur « 🗑️ Supprimer » pour les retirer de l'échéancier."
+        if cochees else "Pour supprimer des échéances, cochez-les dans la colonne ☑ du tableau."
+    )
+
 if modifications:
     avant = {jour: dict(valeurs) for jour, valeurs in corrections.items()}  # pour « Annuler la dernière modification »
     ignorees, refusees = 0, []
@@ -1079,6 +1172,38 @@ if modifications:
     if corrections != avant:
         historique.append(avant)
     st.session_state[cle_corrections + "_version"] = version_tableau + 1
+    st.rerun()
+
+# Ajout d'une échéance ----------------------------------------------------------------------------------------
+dates_tableau = list(echeancier["Date"])
+debut_ajout = dates_tableau[params.nb_echeances_differe - 1] if params.nb_echeances_differe else None
+c_date, c_bouton = st.columns([3, 1], vertical_alignment="bottom")
+date_ajout = c_date.date_input(
+    "➕ Ajouter une échéance à la date du", key=cle(f"date_ajout_{version_tableau}"), value=None, format="DD/MM/YYYY",
+    help="L'échéance est insérée à sa date dans le tableau, puis l'échéancier est recalculé.",
+)
+if c_bouton.button("➕ Ajouter", key=cle("ajouter_echeance"), disabled=date_ajout is None, width="stretch"):
+    if date_ajout in dates_tableau:
+        st.session_state[cle_corrections + "_message"] = (
+            f"Une échéance existe déjà le {date_ajout.strftime('%d/%m/%Y')} : modifiez-la directement dans le tableau."
+        )
+        st.session_state[cle_corrections + "_version"] = version_tableau + 1
+    elif debut_ajout and date_ajout <= debut_ajout:
+        st.session_state[cle_corrections + "_message"] = (
+            f"L'échéance du {date_ajout.strftime('%d/%m/%Y')} tomberait pendant le différé (jusqu'au "
+            f"{debut_ajout.strftime('%d/%m/%Y')}) : modifiez plutôt le nombre d'échéances de différé à l'étape 1."
+        )
+        st.session_state[cle_corrections + "_version"] = version_tableau + 1
+    elif not 1990 <= date_ajout.year <= 2100:
+        st.session_state[cle_corrections + "_message"] = f"La date du {date_ajout.strftime('%d/%m/%Y')} n'est pas vraisemblable."
+        st.session_state[cle_corrections + "_version"] = version_tableau + 1
+    else:
+        nouvelles = {jour: dict(valeurs) for jour, valeurs in corrections.items()}
+        if nouvelles.get(date_ajout, {}).get("supprimee"):
+            nouvelles.pop(date_ajout)  # échéance prévue supprimée puis rajoutée : retour au calcul
+        else:
+            nouvelles[date_ajout] = {"ajoutee": True}
+        enregistrer(nouvelles)
     st.rerun()
 
 st.download_button(
