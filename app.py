@@ -845,7 +845,8 @@ elif date_reference and solde_reference is not None:
         )
         message = (
             f"Échéancier recalculé ({detail}). Capital restant dû après l'échéance du "
-            f"{ajustement.date_echeance.strftime('%d/%m/%Y')} : {euros(ajustement.solde_obtenu)}"
+            f"{ajustement.date_echeance.strftime('%d/%m/%Y')} : {euros(ajustement.solde_obtenu)} ; ensuite, "
+            "l'échéance est recalculée si besoin pour finir au terme du prêt"
         )
         messages_ajustement.append(
             ("success", message + " ✅") if precision <= 0.005

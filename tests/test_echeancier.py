@@ -884,3 +884,15 @@ def test_amortissement_constant_interets_sur_fonds_verses():
     assert e["Intérêt (€)"].iloc[0] == round(12_447.93 * 0.0355 * 7 / 365, 2)
     assert e["Intérêt (€)"].iloc[0] < round(32_500 * 0.0355 / 12, 2)
     assert e["Solde (€)"].iloc[-1] == 0 and (e["Amortissement (€)"].iloc[:-1] == round(32_500 / 48, 2)).all()
+
+
+def test_ajustement_puis_changement_de_duree():
+    """Capital restant dû imposé à une date, puis durée modifiée : le solde reste celui imposé à la date, et
+    l'échéance est ensuite recalculée pour finir au nouveau terme."""
+    p = ParametresPret(capital=12_000, taux=3.0, nb_echeances=24, date_premier_paiement=date(2026, 1, 5),
+                       jour_prelevement=5)
+    for n in (24, 36, 60):
+        a = ajuster_sur_solde(replace(p, nb_echeances=n), date(2026, 6, 5), 9_000)
+        e = calculer_echeancier(a.parametres)
+        assert len(e) == n and e["Solde (€)"].iloc[-1] == 0
+        assert solde_a_la_date(a.parametres, date(2026, 6, 5))[1] == pytest.approx(9_000, abs=0.05)

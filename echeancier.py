@@ -100,6 +100,8 @@ class ParametresPret:
     # correction de capital, l'échéance est recalculée pour finir au terme
     capital_impose: dict[str, float] = field(default_factory=dict)  # « AAAA-MM » → capital remboursé constaté
     # (grand livre) ; après le dernier, l'échéance est recalculée pour finir au terme
+    recalcul_apres: date | None = None  # date d'un capital restant dû imposé (ajustement) : après la dernière
+    # échéance à cette date ou avant, l'échéance est recalculée pour finir au terme
     echeance_apres_corrections: float | None = None  # échéance (intérêts + capital) après le dernier montant
     # imposé (grand livre ou modification) ; None = recalculée pour finir au terme (fixée par l'ajustement)
     echeances_constatees: dict[str, float] = field(default_factory=dict)  # « AAAA-MM » → intérêts + capital
@@ -362,6 +364,7 @@ class Anticipes:
     suspendues: dict[int, bool] = field(default_factory=dict)  # échéances suspendues (indice → capital seul ?)
     allonge: bool = True  # suspension : durée allongée (True) ou échéance recalculée à la reprise (False)
     echeance_reprise: float | None = None  # échéance imposée après le dernier montant constaté ou corrigé
+    reprise: int | None = None  # échéance du capital restant dû imposé (ajustement), après laquelle on recalcule
 
     def suspendre(self, k: int, interet: float) -> float | None:
         """Amortissement d'une échéance suspendue : 0 (capital seul, intérêts payés) ou intérêts ajoutés au
@@ -400,9 +403,28 @@ class Anticipes:
             return min(max(round(self.imposes[k], 2), 0.0), restant)
         return a
 
-    def apres_constate(self, k: int, restant_apres: float, n: int) -> float | None:
+    def echeance_reprise_ajustement(self, echeance: float, restant_apres: float, restantes: int) -> float | None:
+        """Après le capital restant dû imposé : l'échéance en cours est gardée si elle solde le prêt au terme
+        (cas usuel : échéance de la banque), sinon recalculée pour finir au terme (durée modifiée…)."""
+        if echeance > 0:
+            t = self.t
+            if t == 0:
+                periodes = restant_apres / echeance
+            elif restant_apres * t < echeance:
+                periodes = -math.log(1 - restant_apres * t / echeance) / math.log(1 + t)
+            else:
+                periodes = None  # l'échéance ne couvre pas les intérêts
+            # Gardée si elle solde le prêt à la dernière échéance prévue (celle-ci pouvant dépasser de 5 % au plus).
+            if periodes is not None and restantes - 1 < periodes <= restantes + 0.05:
+                return None
+        return echeance_pour(restant_apres, self.t, restantes)
+
+    def apres_constate(self, k: int, restant_apres: float, n: int, echeance: float = 0.0) -> float | None:
         """Après le dernier montant constaté ou corrigé (capital ou intérêts) : échéance recalculée sur le
         capital restant, jusqu'au terme."""
+        if k == self.reprise and restant_apres > 0.005 and k < n - 1:
+            # Capital restant dû imposé à cette date : l'échéance doit finir au terme.
+            return self.echeance_reprise_ajustement(echeance, restant_apres, n - k - 1)
         if k in self.corriges and restant_apres > 0.005 and k < n - 1:
             return self.echeance_reprise or echeance_pour(restant_apres, self.t, n - k - 1)
         return None
@@ -454,7 +476,7 @@ def tableau_constant(
         lignes.append((interet, a))
         restant = round(restant - a, 2)
         echeance = (
-            anticipes.apres_suspension(k, restant, n) or anticipes.apres_constate(k, restant, n)
+            anticipes.apres_suspension(k, restant, n) or anticipes.apres_constate(k, restant, n, echeance)
             or anticipes.nouvelle_echeance(k, restant, n) or echeance
         )
     return lignes
@@ -521,7 +543,7 @@ def tableau_proratise(
         a = round(a + anticipes.appliquer(k, a, restant), 2)
         lignes.append((interet, a))
         restant = round(restant - a, 2)
-        apres_constate = anticipes.apres_constate(k, restant, n)
+        apres_constate = anticipes.apres_constate(k, restant, n, echeance_finale or 0.0)
         if apres_constate is not None and reste_a_verser <= 0.005:
             echeance_finale = apres_constate
         elif k in anticipes.appliques and echeance_finale is not None and restant > 0.005:
@@ -602,6 +624,8 @@ def calculer(p: ParametresPret) -> Resultat:
         # Intérêts reportés : le capital ne bouge pas, comme pour une suspension du capital seul.
         suspendues={k: s.capital_inchange for k, s in suspendues.items()},
         echeance_reprise=round(p.echeance_apres_corrections, 2) if p.echeance_apres_corrections else None,
+        reprise=max((k for k, d in enumerate(dates[k0:]) if d <= p.recalcul_apres), default=None)
+        if p.recalcul_apres else None,
     )
     # Échéance de l'offre : calculée sur sa durée, hors échéances suspendues ajoutées par l'allongement.
     n_offre = n - (p.nb_echeances_total - p.nb_echeances)
@@ -646,7 +670,7 @@ def calculer(p: ParametresPret) -> Resultat:
                 a = round(a + anticipes.appliquer(k, a, restant), 2)
             lignes_amort.append((interet, a))
             restant = round(restant - a, 2)
-            dernier_constate = k in anticipes.corriges or anticipes.fin_suspension(k)
+            dernier_constate = k in anticipes.corriges or anticipes.fin_suspension(k) or k == anticipes.reprise
             if (dernier_constate or (k in anticipes.appliques and not anticipes.reduire_duree)) and k < n - 1:
                 part = round(restant / (n - k - 1), 2)  # amortissement réparti sur la durée restante
         if p.deblocages:
@@ -800,6 +824,9 @@ def ajuster_sur_solde(p: ParametresPret, jour: date, solde_cible: float, toleran
     """
     if dates_echeances(p)[0] > jour:
         return None
+    # Le capital restant dû est imposé à cette date ; ensuite, l'échéance est recalculée pour finir au terme (une
+    # durée modifiée est donc prise en compte).
+    p_initial, p = p, replace(p, recalcul_apres=jour)
     base = calculer(p).capital_amorti
     leviers = []
     if plafond_interets_capitalises(p) > 0:
@@ -843,7 +870,7 @@ def ajuster_sur_solde(p: ParametresPret, jour: date, solde_cible: float, toleran
     fourchette = (round(min(extremes), 2), round(max(extremes), 2)) if extremes else None
     if meilleur is None or abs(meilleur[1]) > tolerance:
         date_echeance, solde_actuel = solde_a_la_date(p, jour)
-        return Ajustement(p, date_echeance, solde_actuel, "", possible=False, fourchette=fourchette)
+        return Ajustement(p_initial, date_echeance, solde_actuel, "", possible=False, fourchette=fourchette)
     nom, ecart, parametres = meilleur
     date_echeance, solde = solde_a_la_date(parametres, jour)
     return Ajustement(parametres, date_echeance, solde, nom, fourchette=fourchette, ecart=ecart)

@@ -107,7 +107,9 @@ L'écran se remplit en quelques étapes ; l'échéancier se génère dès que le
    l'échéance. L'ajustement est calculé en dernier, sur l'ensemble des critères (montants du grand livre
    appliqués et modifications du tableau compris) : si des montants sont imposés avant la date saisie, c'est
    l'échéance qui les suit qui est ajustée. À chaque changement d'un critère, tout l'échéancier est recalculé
-   dans cet ordre : paramètres du prêt, grand livre, modifications du tableau, puis ajustement.
+   dans cet ordre : paramètres du prêt, grand livre, modifications du tableau, puis ajustement. Après la date du
+   capital restant dû imposé, l'échéance est gardée si elle solde le prêt au terme, sinon recalculée pour finir
+   au terme : une durée modifiée ensuite est donc bien prise en compte.
 
 Le volet **Options**, placé entre l'étape 1 et l'étape 2, regroupe l'assurance (aucune, coût mensuel fixe en €
 ou % du capital restant dû), les autres frais (aucun, montant total ou % du montant emprunté) et le calcul des
