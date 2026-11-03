@@ -896,3 +896,30 @@ def test_ajustement_puis_changement_de_duree():
         e = calculer_echeancier(a.parametres)
         assert len(e) == n and e["Solde (€)"].iloc[-1] == 0
         assert solde_a_la_date(a.parametres, date(2026, 6, 5))[1] == pytest.approx(9_000, abs=0.05)
+
+
+def pret_300k(**autres):
+    """Prêt de 300 000 € à 0,55 % versé le 29/04/2020 : intérêts seuls du 29/05/2020 au 29/04/2022, capital du
+    29/05/2022 au 29/04/2026 ; remboursement anticipé de 150 000 € le 25/03/2021, pendant le différé."""
+    return ParametresPret(
+        capital=300_000, taux=0.55, nb_echeances=72, nb_echeances_differe=24, interets_differe_capitalises=False,
+        date_premier_paiement=date(2020, 5, 29), jour_prelevement=29, deblocages=[Deblocage(date(2020, 4, 29), 300_000)],
+        remboursements_anticipes=[RemboursementAnticipe(date(2021, 3, 25), 150_000)], **autres,
+    )
+
+
+def test_remboursement_anticipe_pendant_le_differe():
+    r = calculer(pret_300k())
+    e = r.echeancier
+    assert (e["Intérêt (€)"].iloc[:11] == 137.50).all()  # 300 000 € × 0,55 % / 12
+    assert e["Date"].iloc[10] == date(2021, 3, 29) and e["Amortissement (€)"].iloc[10] == 150_000
+    assert e["Échéance (€)"].iloc[10] == 150_137.50
+    assert (e["Intérêt (€)"].iloc[11:24] == 68.75).all()  # intérêts sur les 150 000 € restants
+    assert r.echeance_constante == 3_160.22 and len(e) == 72 and e["Solde (€)"].iloc[-1] == 0
+    assert r.anticipes == [(date(2021, 3, 29), 150_000, 0.0)]
+
+
+def test_remboursement_anticipe_total_pendant_le_differe():
+    p = replace(pret_300k(), remboursements_anticipes=[RemboursementAnticipe(date(2021, 3, 25), total=True)])
+    e = calculer_echeancier(p)
+    assert len(e) == 11 and e["Amortissement (€)"].iloc[-1] == 300_000 and e["Solde (€)"].iloc[-1] == 0

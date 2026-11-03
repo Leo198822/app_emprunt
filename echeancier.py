@@ -284,13 +284,16 @@ def repartir(total: float, n: int) -> list[float]:
     return [part] * (n - 1) + [derniere]
 
 
-def interets_differe(p: ParametresPret, dates: list[date]) -> list[float]:
+def interets_differe(p: ParametresPret, dates: list[date], reductions: dict[int, float] | None = None) -> list[float]:
     """Intérêts de chaque échéance de différé, sur les fonds réellement débloqués.
 
     Méthode bancaire usuelle : les fonds versés avant le début de la période portent intérêt sur une
     période pleine (taux / 12) ; ceux versés pendant la période, au prorata des jours exacts / 365
     jusqu'à l'échéance. Pour la 1re échéance, les intérêts courent depuis la date de chaque déblocage.
+    `reductions` : capital remboursé par anticipation pendant le différé (indice de l'échéance → montant) ; il
+    ne porte plus intérêt pour les périodes suivantes.
     """
+    reductions = reductions or {}
     # Sans déblocage saisi : fonds versés en totalité une période avant la première échéance.
     deblocages = sorted(p.deblocages, key=lambda d: d.date) or [
         Deblocage(ajouter_mois(dates[0], -p.mois_par_periode, p.jour_prelevement), p.capital_effectif)
@@ -309,7 +312,8 @@ def interets_differe(p: ParametresPret, dates: list[date]) -> list[float]:
                 interet += d.montant * t
             else:
                 interet += d.montant * r * p.jours_depuis(d.date, fin) / BASE_JOURS
-        interets.append(round(interet, 2))
+        interet -= sum(m for j, m in reductions.items() if j < len(interets)) * t
+        interets.append(round(max(interet, 0.0), 2))
         debut = fin
     return interets
 
@@ -602,7 +606,27 @@ def calculer(p: ParametresPret) -> Resultat:
     if n <= 0:
         raise ValueError("Le nombre d'échéances doit être supérieur au nombre d'échéances de différé.")
     dates = dates_echeances(p)
-    interets = interets_differe(p, dates)
+    k0 = p.nb_echeances_differe
+    # Remboursements anticipés pendant le différé : imputés à l'échéance de différé qui suit leur date ; le capital
+    # remboursé ne porte plus intérêt ensuite, et le capital à amortir en est réduit.
+    ra_differe: dict[int, list[RemboursementAnticipe]] = {}
+    for ra in sorted(p.remboursements_anticipes, key=lambda r: r.date):
+        if k0 and ra.date <= dates[k0 - 1]:
+            j = next(i for i, d in enumerate(dates[:k0]) if d >= ra.date)
+            ra_differe.setdefault(j, []).append(ra)
+    rembourse_differe: dict[int, float] = {}
+    if ra_differe:
+        interets_bruts = interets_differe(p, dates)
+        verse_rembourse = 0.0
+        for j in sorted(ra_differe):
+            capitalises_j = sum(interets_bruts[: j + 1]) if p.interets_differe_capitalises else 0.0
+            restant_j = round(p.capital_effectif + capitalises_j - verse_rembourse, 2)
+            montant = 0.0
+            for ra in ra_differe[j]:
+                montant += (restant_j - montant) if ra.total else min(max(round(ra.montant, 2), 0.0), restant_j - montant)
+            rembourse_differe[j] = round(montant, 2)
+            verse_rembourse += montant
+    interets = interets_differe(p, dates, rembourse_differe)
     differe_corrige = [k for k, d in enumerate(dates[: p.nb_echeances_differe]) if "interet" in p.corrections.get(d, {})]
     for k in differe_corrige:  # intérêts du différé corrigés par l'utilisateur
         interets[k] = max(round(p.corrections[dates[k]]["interet"], 2), 0.0)
@@ -615,9 +639,8 @@ def calculer(p: ParametresPret) -> Resultat:
     capitalises = calcules if differe_corrige else min(calcules, plafond)
     if p.interets_differe_capitalises and p.interets_capitalises_imposes is not None:
         capitalises = min(max(round(p.interets_capitalises_imposes, 2), 0.0), plafond)
-    base = round(p.capital_effectif + capitalises, 2)
+    base = round(p.capital_effectif + capitalises - sum(rembourse_differe.values()), 2)
 
-    k0 = p.nb_echeances_differe
     suspendues = indices_suspendus(p, dates)
     anticipes = Anticipes(
         reduire_duree=p.anticipe_reduit_duree, t=t, allonge=p.suspension_allonge_duree,
@@ -630,6 +653,8 @@ def calculer(p: ParametresPret) -> Resultat:
     # Échéance de l'offre : calculée sur sa durée, hors échéances suspendues ajoutées par l'allongement.
     n_offre = n - (p.nb_echeances_total - p.nb_echeances)
     for ra in sorted(p.remboursements_anticipes, key=lambda r: r.date):
+        if any(ra in ras for ras in ra_differe.values()):
+            continue  # remboursé pendant le différé (voir plus haut)
         # Rattaché à la 1re échéance d'amortissement à sa date ou après.
         k = next((j for j, d in enumerate(dates[k0:]) if d >= ra.date), None)
         if k is not None:
@@ -724,18 +749,22 @@ def calculer(p: ParametresPret) -> Resultat:
     # déblocage partiel avec l'échéance du prêt complet garde ces échéances à 0 hors assurance et frais,
     # jusqu'au terme prévu du prêt.
     amortissements = [
-        -interets[k] if p.interets_differe_capitalises else 0.0 for k in range(p.nb_echeances_differe)
+        (-interets[k] if p.interets_differe_capitalises else 0.0) + rembourse_differe.get(k, 0.0)
+        for k in range(p.nb_echeances_differe)
     ] + [a for _, a in lignes_amort]
     solde_theorique, soldees = p.capital_effectif, []
     for k, a in enumerate(amortissements):
         solde_theorique = round(solde_theorique - a, 2)
-        if k >= p.nb_echeances_differe and solde_theorique <= 0.005:
+        if (k >= p.nb_echeances_differe or k in rembourse_differe) and solde_theorique <= 0.005:
             soldees.append(k + 1)
             break
-    fin = soldees[0] if soldees and (anticipes.appliques or not p.partiel) else len(dates)
+    fin = soldees[0] if soldees and (anticipes.appliques or rembourse_differe or not p.partiel) else len(dates)
     frais = repartir(p.montant_total_autres_frais, fin) + [0.0] * (len(dates) - fin)  # frais sur les échéances restantes
     for k, ras in anticipes.par_echeance.items():  # indemnités de remboursement anticipé
         frais[k0 + k] = round(frais[k0 + k] + sum(ra.indemnites for ra in ras), 2)
+    for j, ras in ra_differe.items():  # indemnités d'un remboursement pendant le différé
+        if j < len(frais):
+            frais[j] = round(frais[j] + sum(ra.indemnites for ra in ras), 2)
     # Le tableau porte sur la totalité du prêt (échéance constante, comme la banque) ; le solde affiché est
     # le capital réellement versé à chaque date (les fonds non encore débloqués n'en font pas partie).
     lignes, solde = [], p.capital_effectif
@@ -744,7 +773,7 @@ def calculer(p: ParametresPret) -> Resultat:
         crd_debut = round(solde - non_verse(p, debut), 2)
         if k < p.nb_echeances_differe:
             interet = interets[k]
-            amort = -interet if p.interets_differe_capitalises else 0.0
+            amort = (-interet if p.interets_differe_capitalises else 0.0) + rembourse_differe.get(k, 0.0)
         else:
             interet, amort = lignes_amort[k - p.nb_echeances_differe]
         assurance = p.assurance_sur(crd_debut)  # capital restant dû réel en début de période
@@ -758,6 +787,9 @@ def calculer(p: ParametresPret) -> Resultat:
         debut = d
     echeancier = pd.DataFrame(lignes, columns=COLONNES)
     appliques = [
+        (dates[j], montant, round(sum(ra.indemnites for ra in ra_differe[j]), 2))
+        for j, montant in sorted(rembourse_differe.items())
+    ] + [
         (dates[k0 + k], montant, round(sum(ra.indemnites for ra in anticipes.par_echeance[k]), 2))
         for k, montant in sorted(anticipes.appliques.items())
     ]

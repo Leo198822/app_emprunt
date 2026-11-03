@@ -80,7 +80,8 @@ L'écran se remplit en quelques étapes ; l'échéancier se génère dès que le
    intérêts (sauf intérêts reportés), de l'assurance et des frais.
 4. **Remboursements anticipés (facultatif)** : case « Le prêt a fait l'objet d'un remboursement anticipé ».
    Pour chacun : date, capital remboursé (ou case « Total »), indemnités (IRA). Le remboursement est intégré
-   à l'échéance qui suit sa date (Amortissement ; indemnités en Autres frais). Après un remboursement
+   à l'échéance qui suit sa date (Amortissement ; indemnités en Autres frais). Un remboursement pendant le différé est
+   accepté : le capital remboursé ne porte plus intérêt ensuite et l'échéance est calculée sur le capital restant. Après un remboursement
    partiel : échéance maintenue (durée réduite) ou durée maintenue (échéance recalculée). Une fois le
    capital soldé par anticipation, l'échéancier s'arrête.
 5. **Modifier l'échéancier** : dans le tableau, double-cliquez sur un intérêt, une assurance, des frais, un

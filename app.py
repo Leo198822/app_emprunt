@@ -597,7 +597,8 @@ if st.checkbox("Le prêt a fait l'objet d'un **remboursement anticipé**", key=c
         ))
     st.caption(
         "Le remboursement est intégré à l'échéance qui suit sa date (capital remboursé dans la colonne Amortissement, "
-        "indemnités dans Autres frais). Après un remboursement total, l'échéancier s'arrête."
+        "indemnités dans Autres frais), y compris pendant un différé : le capital remboursé ne porte plus intérêt "
+        "ensuite et l'échéance est calculée sur le capital restant. Après un remboursement total, l'échéancier s'arrête."
     )
     if any(not ra.total for ra in anticipes):
         anticipe_reduit_duree = st.radio(
@@ -618,10 +619,10 @@ if st.checkbox("Le prêt a fait l'objet d'un **remboursement anticipé**", key=c
                     f"le remboursement du {ra.date.strftime('%d/%m/%Y')} est postérieur à la dernière échéance "
                     f"({derniere.strftime('%d/%m/%Y')})"
                 )
-            elif ra.date <= premier_paiement or (nb_differe and ra.date < premiere_amortissement):
+            elif ra.date < (versement := min((d.date for d in deblocages), default=ajouter_mois(premier_paiement, -mois, premier_paiement.day))):
                 erreurs_anticipes.append(
-                    f"le remboursement du {ra.date.strftime('%d/%m/%Y')} précède la 1re échéance de remboursement "
-                    f"du capital ({premiere_amortissement.strftime('%d/%m/%Y')})"
+                    f"le remboursement du {ra.date.strftime('%d/%m/%Y')} précède le versement des fonds "
+                    f"({versement.strftime('%d/%m/%Y')})"
                 )
         for ra in anticipes:
             if ra.total and (apres := [d for d in deblocages if d.date > ra.date]):
