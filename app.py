@@ -747,10 +747,40 @@ params = ParametresPret(
     suspension_allonge_duree=suspension_allonge,
     interets_reportes_etales=interets_reportes_etales,
 )
+
+# Partie « Échéancier » : grand livre appliqué, ajustement sur un capital restant dû, modifications du tableau. Elle
+# repart de zéro dès qu'un paramètre du prêt, une option ou un déblocage change (le choix des échéances pendant le
+# déblocage des fonds, lui, est conservé) : ses widgets ont des clés propres à chaque jeu de paramètres.
+signature_pret = repr(replace(params, echeance_proratisee=False, interets_fonds_verses=False))
+if st.session_state.get("signature_pret") != signature_pret:
+    if "signature_pret" in st.session_state:
+        ancienne = st.session_state.get("version_echeancier", 0)
+        prefixe = f"_{st.session_state.get('reinitialisations', 0)}_e{ancienne}"
+        modifie = (
+            st.session_state.get(f"corrections{prefixe}")
+            or st.session_state.get(f"appliquer_grand_livre{prefixe}")
+            or st.session_state.get(f"date_reference{prefixe}")
+            or st.session_state.get(f"solde_reference{prefixe}") is not None
+        )
+        st.session_state["version_echeancier"] = ancienne + 1
+        st.session_state["echeancier_reinitialise"] = bool(modifie)
+    st.session_state["signature_pret"] = signature_pret
+
+
+def cle_echeancier(nom: str) -> str:
+    """Clé d'un widget de la partie « Échéancier » : change à chaque nouveau jeu de paramètres du prêt."""
+    return f"{cle(nom)}_e{st.session_state.get('version_echeancier', 0)}"
+
+
+if st.session_state.pop("echeancier_reinitialise", False):
+    st.info(
+        "🔄 Les paramètres du prêt ou les déblocages ont changé : l'échéancier a été recalculé et ses réglages "
+        "(grand livre appliqué, capital restant dû, modifications du tableau) ont été réinitialisés."
+    )
 # Contrôle avec le grand livre : établi sur l'échéancier calculé ; si l'utilisateur choisit d'appliquer les
 # montants du grand livre, l'échéancier est régénéré avec le capital constaté.
-cle_appliquer = cle("appliquer_grand_livre")
-cle_interets_gl = cle("grand_livre_interets_inclus")
+cle_appliquer = cle_echeancier("appliquer_grand_livre")
+cle_interets_gl = cle_echeancier("grand_livre_interets_inclus")
 CHOIX_INTERETS_GL = ["le capital seul (hors intérêts)", "le capital et les intérêts"]
 controle_initial = nature_initiale = None
 grand_livre_applique = interets_inclus_gl = False
@@ -769,7 +799,7 @@ if remboursements is not None and not remboursements.empty:
         )
 
 # Modifications faites par l'utilisateur directement dans le tableau d'échéancier (par date d'échéance).
-cle_corrections = cle("corrections")
+cle_corrections = cle_echeancier("corrections")
 corrections = st.session_state.setdefault(cle_corrections, {})
 # Historique des états précédents des corrections : une entrée par modification validée dans le tableau.
 historique = st.session_state.setdefault(cle_corrections + "_historique", [])
@@ -810,7 +840,7 @@ if corrections:
 # Ajustement sur un capital restant dû connu : calculé en dernier, sur l'ensemble des critères (grand livre appliqué
 # et modifications du tableau compris), pour que le solde visé soit celui de l'échéancier affiché. Valeurs saisies
 # dans les champs affichés plus bas (« Contrôler l'échéancier », n°2), où sont aussi affichés les messages.
-cle_date_reference, cle_solde_reference = cle("date_reference"), cle("solde_reference")
+cle_date_reference, cle_solde_reference = cle_echeancier("date_reference"), cle_echeancier("solde_reference")
 date_reference = st.session_state.get(cle_date_reference)
 solde_reference = st.session_state.get(cle_solde_reference)
 messages_ajustement = []  # (type de message, texte)
@@ -1247,10 +1277,10 @@ copie = lambda: {jour: dict(valeurs) for jour, valeurs in corrections.items()}  
 
 c_champ, c_bouton = st.columns([3, 1], vertical_alignment="bottom")
 date_ajout = c_champ.date_input(
-    "➕ Ajouter une échéance le", key=cle(f"date_ajout_{version_tableau}"), value=None, format="DD/MM/YYYY",
+    "➕ Ajouter une échéance le", key=cle_echeancier(f"date_ajout_{version_tableau}"), value=None, format="DD/MM/YYYY",
     help="L'échéance est insérée à sa date dans le tableau, puis l'échéancier est recalculé.",
 )
-if c_bouton.button("➕ Ajouter", key=cle("ajouter_echeance"), disabled=date_ajout is None, width="stretch"):
+if c_bouton.button("➕ Ajouter", key=cle_echeancier("ajouter_echeance"), disabled=date_ajout is None, width="stretch"):
     if date_ajout in dates_tableau:
         refuser(f"Une échéance existe déjà le {date_ajout.strftime('%d/%m/%Y')} : modifiez-la directement dans le tableau.")
     elif debut_ajout and date_ajout <= debut_ajout:
@@ -1274,10 +1304,10 @@ a_supprimer = c_champ.multiselect(
     "🗑️ Supprimer les échéances du",
     dates_tableau[params.nb_echeances_differe :],  # les échéances du différé se règlent à l'étape 1
     format_func=lambda d: d.strftime("%d/%m/%Y"),
-    key=cle(f"a_supprimer_{version_tableau}"),
+    key=cle_echeancier(f"a_supprimer_{version_tableau}"),
     placeholder="Choisissez une ou plusieurs dates",
 )
-if c_bouton.button("🗑️ Supprimer", key=cle("supprimer_echeances"), disabled=not a_supprimer, width="stretch"):
+if c_bouton.button("🗑️ Supprimer", key=cle_echeancier("supprimer_echeances"), disabled=not a_supprimer, width="stretch"):
     if len(dates_tableau) - params.nb_echeances_differe - len(a_supprimer) < 1:
         refuser("Suppression impossible : il doit rester au moins une échéance de remboursement du capital.")
     else:
@@ -1296,11 +1326,11 @@ if supprimees_tableau:
         f"↩ Rétablir des échéances supprimées ({len(supprimees_tableau)})",
         supprimees_tableau,
         format_func=lambda d: d.strftime("%d/%m/%Y"),
-        key=cle(f"a_retablir_{version_tableau}"),
+        key=cle_echeancier(f"a_retablir_{version_tableau}"),
         placeholder="Choisissez une ou plusieurs dates",
         help="Échéances supprimées : " + ", ".join(d.strftime("%d/%m/%Y") for d in supprimees_tableau),
     )
-    if c_bouton.button("↩ Rétablir", key=cle("retablir_echeances"), disabled=not a_retablir, width="stretch"):
+    if c_bouton.button("↩ Rétablir", key=cle_echeancier("retablir_echeances"), disabled=not a_retablir, width="stretch"):
         nouvelles = copie()
         for jour in a_retablir:
             nouvelles.pop(jour, None)

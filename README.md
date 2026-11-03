@@ -111,6 +111,11 @@ L'écran se remplit en quelques étapes ; l'échéancier se génère dès que le
    capital restant dû imposé, l'échéance est gardée si elle solde le prêt au terme, sinon recalculée pour finir
    au terme : une durée modifiée ensuite est donc bien prise en compte.
 
+**Réinitialisation de l'échéancier** : dès qu'un paramètre du prêt, une option, un déblocage, une suspension ou un
+remboursement anticipé change, la partie « Échéancier » repart de zéro : grand livre appliqué, capital restant dû
+imposé et modifications du tableau sont effacés (un message le signale). Seul le choix « Échéances pendant le
+déblocage des fonds » est conservé.
+
 Le volet **Options**, placé entre l'étape 1 et l'étape 2, regroupe l'assurance (aucune, coût mensuel fixe en €
 ou % du capital restant dû), les autres frais (aucun, montant total ou % du montant emprunté) et le calcul des
 intérêts en jours exacts, et l'option « compter le jour du versement » (intérêts d'un déblocage du 2 au 9 = 8 jours au lieu de 7, comme certaines banques) ; il est replié par défaut et chaque champ de saisie n'apparaît qu'une fois le mode choisi.
