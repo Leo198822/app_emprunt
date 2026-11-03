@@ -918,7 +918,14 @@ if insuffisance := fonds_insuffisants(params, echeancier):
     boutons_annulation(*st.columns(2))
     st.stop()
 
-m1, m2, m3, m4 = st.columns(4)
+# Chiffres clés : taille réduite pour que les grands montants (ex. 300 000,00 €) tiennent dans leur colonne.
+st.html(
+    """<style>
+    .st-key-chiffres_cles [data-testid="stMetricValue"] { font-size: clamp(1.05rem, 2.6vw, 1.55rem); }
+    .st-key-chiffres_cles [data-testid="stMetricValue"] > div { overflow: visible; text-overflow: clip; white-space: nowrap; }
+    </style>"""
+)
+m1, m2, m3, m4 = st.container(key="chiffres_cles").columns(4)
 m1.metric(
     "Échéance (ass. comprise)" if params.assurance_mensuelle or params.assurance_taux_crd else "Échéance",
     # Échéance la plus fréquente, hors échéances à 0 (capital soldé avant le terme).
