@@ -649,6 +649,9 @@ def calculer(p: ParametresPret) -> Resultat:
             dernier_constate = k in anticipes.corriges or anticipes.fin_suspension(k)
             if (dernier_constate or (k in anticipes.appliques and not anticipes.reduire_duree)) and k < n - 1:
                 part = round(restant / (n - k - 1), 2)  # amortissement réparti sur la durée restante
+        if p.deblocages:
+            # Fonds versés après le début du remboursement : les intérêts ne portent que sur les fonds versés.
+            lignes_amort = interets_sur_fonds_verses(p, dates, base, lignes_amort, facteurs, anticipes)
     else:
         if p.echeance_imposee:
             echeance = round(p.echeance_imposee, 2)

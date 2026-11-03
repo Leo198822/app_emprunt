@@ -872,3 +872,15 @@ def test_pas_d_echeance_a_zero_en_fin_si_deblocage_complet():
     # Déblocage partiel avec l'échéance du prêt complet : les échéances à 0 restent jusqu'au terme (voulu).
     partiel = calculer_echeancier(replace(p, echeance_imposee=None, montant_debloque=7_500, autres_frais=0.0))
     assert len(partiel) == 24
+
+
+def test_amortissement_constant_interets_sur_fonds_verses():
+    """Amortissement constant avec des déblocages après la 1re échéance : intérêts sur les seuls fonds versés."""
+    deb, _ = deblocages_cmb()
+    p = ParametresPret(capital=32_500, taux=3.55, nb_echeances=48, date_premier_paiement=date(2025, 5, 9),
+                       jour_prelevement=9, deblocages=deb, type_remboursement="Amortissement constant")
+    e = calculer_echeancier(p)
+    # 09/05/2025 : 12 447,93 € versés le 02/05 (7 jours), pas 32 500 € sur un mois.
+    assert e["Intérêt (€)"].iloc[0] == round(12_447.93 * 0.0355 * 7 / 365, 2)
+    assert e["Intérêt (€)"].iloc[0] < round(32_500 * 0.0355 / 12, 2)
+    assert e["Solde (€)"].iloc[-1] == 0 and (e["Amortissement (€)"].iloc[:-1] == round(32_500 / 48, 2)).all()
