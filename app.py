@@ -681,27 +681,29 @@ if len(deblocages) > 1 and premier_paiement and nb_echeances and type_remboursem
     premiere_amortissement = ajouter_mois(premier_paiement, int(nb_differe) * mois, premier_paiement.day)
     tardifs = [d for d in deblocages if d.date > premiere_amortissement]
     if tardifs:
-        st.markdown(
-            "**Échéances pendant le déblocage des fonds** — "
-            f"{len(tardifs)} déblocage{'s' if len(tardifs) > 1 else ''} "
-            f"intervien{'nent' if len(tardifs) > 1 else 't'} après la 1re échéance de remboursement du capital "
-            f"({premiere_amortissement.strftime('%d/%m/%Y')}). Jusqu'au dernier déblocage "
-            f"({max(d.date for d in tardifs).strftime('%d/%m/%Y')}), les échéances sont…"
-        )
-        mode_tardifs = st.radio(
-            "Échéances avant le dernier déblocage",
-            [
-                "totales : échéance constante, calculée sur la totalité du prêt dès la 1re échéance",
-                "proratisées : réduites au prorata des fonds déjà versés, puis recalculées après le dernier déblocage",
-                "capital du prêt complet, intérêts sur les seuls fonds versés : capital de l'échéance constante du prêt "
-                "complet, intérêts calculés sur les fonds déjà versés (échéance réduite jusqu'au dernier déblocage)",
-            ],
-            key=cle("echeance_proratisee"),
-            index=1,  # proratisation par défaut, en fonction des dates de déblocage
-            label_visibility="collapsed",
-        )
-        echeance_proratisee = mode_tardifs.startswith("proratisées")
-        interets_fonds_verses = mode_tardifs.startswith("capital du prêt complet")
+        dernier_deblocage = max(d.date for d in tardifs)
+        with st.container(border=True):
+            st.markdown("##### Échéances pendant le déblocage des fonds")
+            st.markdown(
+                f"Le remboursement du capital commence le **{premiere_amortissement.strftime('%d/%m/%Y')}**, mais "
+                f"**{len(tardifs)} déblocage{'s' if len(tardifs) > 1 else ''}** "
+                f"intervien{'nent' if len(tardifs) > 1 else 't'} après cette date, jusqu'au "
+                f"**{dernier_deblocage.strftime('%d/%m/%Y')}**."
+            )
+            mode_tardifs = st.radio(
+                "Jusqu'au dernier déblocage, comment la banque calcule-t-elle les échéances ?",
+                ["Totales", "Proratisées", "Capital du prêt complet, intérêts sur les fonds versés"],
+                captions=[
+                    "Échéance constante, calculée sur la totalité du prêt dès la 1re échéance.",
+                    "Échéance réduite au prorata des fonds déjà versés, puis recalculée après le dernier déblocage.",
+                    "Capital remboursé comme pour le prêt complet ; intérêts sur les seuls fonds déjà versés, "
+                    "donc échéance réduite jusqu'au dernier déblocage.",
+                ],
+                key=cle("mode_echeances_deblocage"),
+                index=1,  # proratisation par défaut, en fonction des dates de déblocage
+            )
+        echeance_proratisee = mode_tardifs == "Proratisées"
+        interets_fonds_verses = mode_tardifs.startswith("Capital du prêt complet")
 
 params = ParametresPret(
     capital=capital,
