@@ -36,7 +36,8 @@ L'écran se remplit en quelques étapes ; l'échéancier se génère dès que le
    utilisée (amortissement constant), une date d'ajustement postérieure à la fin du prêt. Dans le tableau
    d'échéancier, les montants négatifs ou supérieurs au capital plus les intérêts du prêt sont refusés.
    **Déblocages après la 1re échéance de remboursement du capital** (plusieurs déblocages) : l'option
-   n'apparaît que dans ce cas, en tête de la rubrique « Échéancier ». Jusqu'au dernier déblocage, les échéances sont au choix
+   est proposée en tête de la rubrique « Échéancier » dès qu'il y a plusieurs déblocages (elle n'a d'effet que
+   si des fonds sont versés après le début du remboursement du capital, ce que le bloc indique). Jusqu'au dernier déblocage, les échéances sont au choix
    - *proratisées* (**par défaut**) : réduites au prorata des fonds déjà versés, intérêts sur le capital
      réellement versé, puis échéance recalculée après le dernier déblocage pour solder le prêt au terme ;
    - *totales* : échéance constante, calculée sur la totalité du prêt dès la 1re échéance, quelles que

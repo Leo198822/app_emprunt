@@ -677,46 +677,49 @@ if depassement or manque or erreurs_dates:
 
 # Échéances avant le dernier déblocage (en tête de la rubrique Échéancier).
 echeance_proratisee = interets_fonds_verses = False
-if deblocages and premier_paiement and nb_echeances:
+if (len(deblocages) > 1 or any(d.date > premier_paiement for d in deblocages if premier_paiement)) and premier_paiement and nb_echeances:
+    # Proposé dès qu'il y a plusieurs déblocages (ou un déblocage après la 1re échéance).
     mois = PERIODICITES[periodicite]
     premiere_amortissement = ajouter_mois(premier_paiement, int(nb_differe) * mois, premier_paiement.day)
     tardifs = [d for d in deblocages if d.date > premiere_amortissement]
-    if tardifs:
-        dernier_deblocage = max(d.date for d in tardifs)
-        with st.container(border=True):
-            st.markdown("##### Échéances pendant le déblocage des fonds")
+    dernier_deblocage = max(d.date for d in deblocages)
+    with st.container(border=True):
+        st.markdown("##### Échéances pendant le déblocage des fonds")
+        if tardifs:
             st.markdown(
                 f"Le remboursement du capital commence le **{premiere_amortissement.strftime('%d/%m/%Y')}**, mais "
                 f"**{len(tardifs)} déblocage{'s' if len(tardifs) > 1 else ''}** "
                 f"intervien{'nent' if len(tardifs) > 1 else 't'} après cette date, jusqu'au "
                 f"**{dernier_deblocage.strftime('%d/%m/%Y')}**."
             )
-            if type_remboursement == "Échéances constantes":
-                mode_tardifs = st.radio(
-                    "Jusqu'au dernier déblocage, comment la banque calcule-t-elle les échéances ?",
-                    ["Totales", "Proratisées", "Capital du prêt complet, intérêts sur les fonds versés"],
-                    captions=[
-                        "Échéance constante, calculée sur la totalité du prêt dès la 1re échéance.",
-                        "Échéance réduite au prorata des fonds déjà versés, puis recalculée après le dernier déblocage.",
-                        "Capital remboursé comme pour le prêt complet ; intérêts sur les seuls fonds déjà versés, "
-                        "donc échéance réduite jusqu'au dernier déblocage.",
-                    ],
-                    key=cle("mode_echeances_deblocage"),
-                    index=1,  # proratisation par défaut, en fonction des dates de déblocage
-                )
-                echeance_proratisee = mode_tardifs == "Proratisées"
-                interets_fonds_verses = mode_tardifs.startswith("Capital du prêt complet")
-            else:
-                st.caption(
-                    "Amortissement constant : le capital est remboursé par parts égales dès la 1re échéance ; jusqu'au "
-                    "dernier déblocage, les intérêts ne portent que sur les fonds déjà versés."
-                )
-    elif nb_differe and len(deblocages) > 1:
-        st.caption(
-            f"Tous les fonds sont versés avant le 1er remboursement du capital "
-            f"({premiere_amortissement.strftime('%d/%m/%Y')}) : les déblocages comptent pour les intérêts du différé, "
-            "puis les échéances portent sur la totalité du prêt."
-        )
+        else:
+            st.markdown(
+                f"**{len(deblocages)} déblocages**, jusqu'au **{dernier_deblocage.strftime('%d/%m/%Y')}**. Le "
+                f"remboursement du capital commence le **{premiere_amortissement.strftime('%d/%m/%Y')}**, après le "
+                "dernier déblocage : les déblocages comptent pour les intérêts "
+                + ("du différé, " if nb_differe else "de la 1re échéance, ")
+                + "puis les échéances portent sur la totalité du prêt, quel que soit le choix ci-dessous."
+            )
+        if type_remboursement == "Échéances constantes":
+            mode_tardifs = st.radio(
+                "Jusqu'au dernier déblocage, comment la banque calcule-t-elle les échéances ?",
+                ["Totales", "Proratisées", "Capital du prêt complet, intérêts sur les fonds versés"],
+                captions=[
+                    "Échéance constante, calculée sur la totalité du prêt dès la 1re échéance.",
+                    "Échéance réduite au prorata des fonds déjà versés, puis recalculée après le dernier déblocage.",
+                    "Capital remboursé comme pour le prêt complet ; intérêts sur les seuls fonds déjà versés, "
+                    "donc échéance réduite jusqu'au dernier déblocage.",
+                ],
+                key=cle("mode_echeances_deblocage"),
+                index=1,  # proratisation par défaut, en fonction des dates de déblocage
+            )
+            echeance_proratisee = mode_tardifs == "Proratisées"
+            interets_fonds_verses = mode_tardifs.startswith("Capital du prêt complet")
+        else:
+            st.caption(
+                "Amortissement constant : le capital est remboursé par parts égales dès la 1re échéance ; jusqu'au "
+                "dernier déblocage, les intérêts ne portent que sur les fonds déjà versés."
+            )
 
 params = ParametresPret(
     capital=capital,
