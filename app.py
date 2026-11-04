@@ -1143,8 +1143,8 @@ st.info(
     "✏️ **Modifier** : double-cliquez sur un intérêt, une assurance, des frais, un capital ou une échéance, saisissez "
     "le bon montant puis appuyez sur Entrée. Les échéances suivantes sont ajustées pour solder le prêt au terme (un "
     "intérêt modifié conserve l'échéance ; une échéance modifiée fixe le capital).  \n"
-    "➕ 🗑️ **Ajouter ou supprimer des échéances** : sous le tableau. L'échéance est alors répartie sur le nouveau "
-    "nombre d'échéances."
+    "➕ 🗑️ **Ajouter ou supprimer des échéances** : sous le tableau, cliquez sur la rubrique pour l'ouvrir. "
+    "L'échéance est alors répartie sur le nouveau nombre d'échéances."
 )
 supprimees_tableau = sorted(d for d, c in corrections.items() if c.get("supprimee"))
 nb_ajoutees = sum(1 for c in corrections.values() if c.get("ajoutee"))
@@ -1281,72 +1281,73 @@ if modifications:
     st.rerun()
 
 # Ajout, suppression et rétablissement d'échéances --------------------------------------------------------------
-st.markdown("**Ajouter ou supprimer des échéances**")
-dates_tableau = list(echeancier["Date"])
-debut_ajout = dates_tableau[params.nb_echeances_differe - 1] if params.nb_echeances_differe else None
-copie = lambda: {jour: dict(valeurs) for jour, valeurs in corrections.items()}  # noqa: E731
+with st.expander("➕ 🗑️ Ajouter ou supprimer des échéances"):
+    # Replié par défaut : cliquez sur le titre pour l'ouvrir.
+    dates_tableau = list(echeancier["Date"])
+    debut_ajout = dates_tableau[params.nb_echeances_differe - 1] if params.nb_echeances_differe else None
+    copie = lambda: {jour: dict(valeurs) for jour, valeurs in corrections.items()}  # noqa: E731
 
-c_champ, c_bouton = st.columns([3, 1], vertical_alignment="bottom")
-date_ajout = c_champ.date_input(
-    "➕ Ajouter une échéance le", key=cle_echeancier(f"date_ajout_{version_tableau}"), value=None, format="DD/MM/YYYY",
-    help="L'échéance est insérée à sa date dans le tableau, puis l'échéancier est recalculé.",
-)
-if c_bouton.button("➕ Ajouter", key=cle_echeancier("ajouter_echeance"), disabled=date_ajout is None, width="stretch"):
-    if date_ajout in dates_tableau:
-        refuser(f"Une échéance existe déjà le {date_ajout.strftime('%d/%m/%Y')} : modifiez-la directement dans le tableau.")
-    elif debut_ajout and date_ajout <= debut_ajout:
-        refuser(
-            f"L'échéance du {date_ajout.strftime('%d/%m/%Y')} tomberait pendant le différé (jusqu'au "
-            f"{debut_ajout.strftime('%d/%m/%Y')}) : modifiez plutôt le nombre d'échéances de différé à l'étape 1."
-        )
-    elif not 1990 <= date_ajout.year <= 2100:
-        refuser(f"La date du {date_ajout.strftime('%d/%m/%Y')} n'est pas vraisemblable.")
-    else:
-        nouvelles = copie()
-        if nouvelles.get(date_ajout, {}).get("supprimee"):
-            nouvelles.pop(date_ajout)  # échéance prévue supprimée puis rajoutée : retour au calcul
-        else:
-            nouvelles[date_ajout] = {"ajoutee": True}
-        enregistrer(nouvelles)
-    st.rerun()
-
-c_champ, c_bouton = st.columns([3, 1], vertical_alignment="bottom")
-a_supprimer = c_champ.multiselect(
-    "🗑️ Supprimer les échéances du",
-    dates_tableau[params.nb_echeances_differe :],  # les échéances du différé se règlent à l'étape 1
-    format_func=lambda d: d.strftime("%d/%m/%Y"),
-    key=cle_echeancier(f"a_supprimer_{version_tableau}"),
-    placeholder="Choisissez une ou plusieurs dates",
-)
-if c_bouton.button("🗑️ Supprimer", key=cle_echeancier("supprimer_echeances"), disabled=not a_supprimer, width="stretch"):
-    if len(dates_tableau) - params.nb_echeances_differe - len(a_supprimer) < 1:
-        refuser("Suppression impossible : il doit rester au moins une échéance de remboursement du capital.")
-    else:
-        nouvelles = copie()
-        for jour in a_supprimer:
-            if nouvelles.get(jour, {}).get("ajoutee"):
-                nouvelles.pop(jour)  # échéance ajoutée par l'utilisateur : simplement retirée
-            else:
-                nouvelles[jour] = {"supprimee": True}
-        enregistrer(nouvelles)
-    st.rerun()
-
-if supprimees_tableau:
     c_champ, c_bouton = st.columns([3, 1], vertical_alignment="bottom")
-    a_retablir = c_champ.multiselect(
-        f"↩ Rétablir des échéances supprimées ({len(supprimees_tableau)})",
-        supprimees_tableau,
-        format_func=lambda d: d.strftime("%d/%m/%Y"),
-        key=cle_echeancier(f"a_retablir_{version_tableau}"),
-        placeholder="Choisissez une ou plusieurs dates",
-        help="Échéances supprimées : " + ", ".join(d.strftime("%d/%m/%Y") for d in supprimees_tableau),
+    date_ajout = c_champ.date_input(
+        "➕ Ajouter une échéance le", key=cle_echeancier(f"date_ajout_{version_tableau}"), value=None, format="DD/MM/YYYY",
+        help="L'échéance est insérée à sa date dans le tableau, puis l'échéancier est recalculé.",
     )
-    if c_bouton.button("↩ Rétablir", key=cle_echeancier("retablir_echeances"), disabled=not a_retablir, width="stretch"):
-        nouvelles = copie()
-        for jour in a_retablir:
-            nouvelles.pop(jour, None)
-        enregistrer(nouvelles)
+    if c_bouton.button("➕ Ajouter", key=cle_echeancier("ajouter_echeance"), disabled=date_ajout is None, width="stretch"):
+        if date_ajout in dates_tableau:
+            refuser(f"Une échéance existe déjà le {date_ajout.strftime('%d/%m/%Y')} : modifiez-la directement dans le tableau.")
+        elif debut_ajout and date_ajout <= debut_ajout:
+            refuser(
+                f"L'échéance du {date_ajout.strftime('%d/%m/%Y')} tomberait pendant le différé (jusqu'au "
+                f"{debut_ajout.strftime('%d/%m/%Y')}) : modifiez plutôt le nombre d'échéances de différé à l'étape 1."
+            )
+        elif not 1990 <= date_ajout.year <= 2100:
+            refuser(f"La date du {date_ajout.strftime('%d/%m/%Y')} n'est pas vraisemblable.")
+        else:
+            nouvelles = copie()
+            if nouvelles.get(date_ajout, {}).get("supprimee"):
+                nouvelles.pop(date_ajout)  # échéance prévue supprimée puis rajoutée : retour au calcul
+            else:
+                nouvelles[date_ajout] = {"ajoutee": True}
+            enregistrer(nouvelles)
         st.rerun()
+
+    c_champ, c_bouton = st.columns([3, 1], vertical_alignment="bottom")
+    a_supprimer = c_champ.multiselect(
+        "🗑️ Supprimer les échéances du",
+        dates_tableau[params.nb_echeances_differe :],  # les échéances du différé se règlent à l'étape 1
+        format_func=lambda d: d.strftime("%d/%m/%Y"),
+        key=cle_echeancier(f"a_supprimer_{version_tableau}"),
+        placeholder="Choisissez une ou plusieurs dates",
+    )
+    if c_bouton.button("🗑️ Supprimer", key=cle_echeancier("supprimer_echeances"), disabled=not a_supprimer, width="stretch"):
+        if len(dates_tableau) - params.nb_echeances_differe - len(a_supprimer) < 1:
+            refuser("Suppression impossible : il doit rester au moins une échéance de remboursement du capital.")
+        else:
+            nouvelles = copie()
+            for jour in a_supprimer:
+                if nouvelles.get(jour, {}).get("ajoutee"):
+                    nouvelles.pop(jour)  # échéance ajoutée par l'utilisateur : simplement retirée
+                else:
+                    nouvelles[jour] = {"supprimee": True}
+            enregistrer(nouvelles)
+        st.rerun()
+
+    if supprimees_tableau:
+        c_champ, c_bouton = st.columns([3, 1], vertical_alignment="bottom")
+        a_retablir = c_champ.multiselect(
+            f"↩ Rétablir des échéances supprimées ({len(supprimees_tableau)})",
+            supprimees_tableau,
+            format_func=lambda d: d.strftime("%d/%m/%Y"),
+            key=cle_echeancier(f"a_retablir_{version_tableau}"),
+            placeholder="Choisissez une ou plusieurs dates",
+            help="Échéances supprimées : " + ", ".join(d.strftime("%d/%m/%Y") for d in supprimees_tableau),
+        )
+        if c_bouton.button("↩ Rétablir", key=cle_echeancier("retablir_echeances"), disabled=not a_retablir, width="stretch"):
+            nouvelles = copie()
+            for jour in a_retablir:
+                nouvelles.pop(jour, None)
+            enregistrer(nouvelles)
+            st.rerun()
 
 st.download_button(
     "📥 Télécharger l'échéancier Pennylane (.xlsx)",

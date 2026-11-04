@@ -91,7 +91,8 @@ L'écran se remplit en quelques étapes ; l'échéancier se génère dès que le
    l'échéance ; une échéance modifiée fixe le capital). Les lignes modifiées sont repérées par ✏️ ;
    « ↶ Annuler la dernière modification » revient à l'état précédant la dernière saisie (plusieurs fois
    de suite si besoin) ; « ↺ Tout annuler » revient à l'échéancier calculé. La dernière échéance solde toujours le capital.
-   **Ajouter ou supprimer des échéances** : sous le tableau, « ➕ Ajouter une échéance le » insère une échéance
+   **Ajouter ou supprimer des échéances** : sous le tableau, dans la rubrique repliable du même nom (cliquer sur
+   la flèche pour l'ouvrir), « ➕ Ajouter une échéance le » insère une échéance
    à sa date ; « 🗑️ Supprimer les échéances du » retire les dates choisies dans la liste ; « ↩ Rétablir des
    échéances supprimées » (affiché s'il y en a) les remet. L'échéancier est recalculé : l'échéance est répartie
    sur le nouveau nombre d'échéances, et une période allongée ou raccourcie porte intérêt sur sa durée réelle
