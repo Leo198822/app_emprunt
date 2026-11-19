@@ -923,3 +923,14 @@ def test_remboursement_anticipe_total_pendant_le_differe():
     p = replace(pret_300k(), remboursements_anticipes=[RemboursementAnticipe(date(2021, 3, 25), total=True)])
     e = calculer_echeancier(p)
     assert len(e) == 11 and e["Amortissement (€)"].iloc[-1] == 300_000 and e["Solde (€)"].iloc[-1] == 0
+
+
+def test_assurance_sur_capital_emprunte_echeance_constante():
+    """53 700 € à 5,82 % sur 60 mois, assurance 0,56 % du capital emprunté : 25,06 € à chaque échéance, et
+    échéance totale constante (la dernière absorbe l'arrondi)."""
+    p = ParametresPret(capital=53_700, taux=5.82, nb_echeances=60, date_premier_paiement=date(2026, 11, 25),
+                       jour_prelevement=25, deblocages=[Deblocage(date(2026, 10, 25), 53_700)], assurance_taux_capital=0.56)
+    e = calculer_echeancier(p)
+    assert (e["Assurance (€)"] == 25.06).all()
+    assert (e["Échéance (€)"].iloc[:-1] == 1_058.74).all() and abs(e["Échéance (€)"].iloc[-1] - 1_058.74) < 0.5
+    assert e["Solde (€)"].iloc[-1] == 0 and p.taux_assurance == 0.56

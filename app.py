@@ -291,23 +291,27 @@ with st.expander("Options (assurance, frais, calcul des intérêts)"):
     c1, c2 = st.columns(2)
     mode_assurance = c1.selectbox(
         "Assurance",
-        ["Aucune", "Montant fixe (€ par mois)", "% du capital restant dû (taux annuel)"],
+        ["Aucune", "Montant fixe (€ par mois)", "% du capital emprunté (taux annuel)", "% du capital restant dû (taux annuel)"],
         key=cle("mode_assurance"),
     )
     assurance_en_taux = mode_assurance.startswith("%")
+    assurance_sur_capital = mode_assurance.startswith("% du capital emprunté")
     valeur_assurance = None
     if mode_assurance != "Aucune":
         valeur_assurance = c2.number_input(
             "Taux annuel de l'assurance (%)" if assurance_en_taux else "Coût mensuel de l'assurance (€)",
-            key=cle("assurance_taux" if assurance_en_taux else "assurance_mensuelle"),
+            key=cle(("assurance_taux_capital" if assurance_sur_capital else "assurance_taux") if assurance_en_taux else "assurance_mensuelle"),
             min_value=0.0,
             value=None,
             step=0.01,
             format="%.3f" if assurance_en_taux else "%.2f",
             placeholder="ex. 0,300" if assurance_en_taux else "ex. 12,50",
             help=(
-                "Taux annuel appliqué au capital restant dû en début de chaque période : l'assurance diminue au fil des "
-                "remboursements et s'arrête quand le capital est soldé."
+                "Taux annuel appliqué au montant emprunté : l'assurance est la même à chaque échéance (ex. 53 700 € × "
+                "0,56 % / 12 = 25,06 € par mois), et l'échéance totale reste constante. C'est le cas le plus courant."
+                if assurance_sur_capital
+                else "Taux annuel appliqué au capital restant dû en début de chaque période : l'assurance diminue au fil "
+                "des remboursements et s'arrête quand le capital est soldé (l'échéance totale diminue aussi)."
                 if assurance_en_taux
                 else "Montant prélevé chaque mois. En périodicité trimestrielle, semestrielle ou annuelle, il est multiplié "
                 "par le nombre de mois de la période. L'assurance court jusqu'au terme du prêt."
@@ -737,7 +741,8 @@ params = ParametresPret(
     type_remboursement=type_remboursement,
     interets_jours_exacts=jours_exacts,
     assurance_mensuelle=0.0 if assurance_en_taux else (valeur_assurance or 0.0),
-    assurance_taux_crd=(valeur_assurance or 0.0) if assurance_en_taux else 0.0,
+    assurance_taux_crd=(valeur_assurance or 0.0) if assurance_en_taux and not assurance_sur_capital else 0.0,
+    assurance_taux_capital=(valeur_assurance or 0.0) if assurance_sur_capital else 0.0,
     autres_frais=autres_frais,
     autres_frais_en_pourcentage=mode_frais.startswith("%"),
     montant_debloque=montant_debloque,
@@ -930,7 +935,7 @@ st.html(
 )
 m1, m2, m3, m4 = st.container(key="chiffres_cles").columns(4)
 m1.metric(
-    "Échéance (ass. comprise)" if params.assurance_mensuelle or params.assurance_taux_crd else "Échéance",
+    "Échéance (ass. comprise)" if params.assurance_mensuelle or params.assurance_taux_crd or params.assurance_taux_capital else "Échéance",
     # Échéance la plus fréquente, hors échéances à 0 (capital soldé avant le terme).
     euros(echeances_payees.mode().iloc[0] if not (echeances_payees := echeancier["Échéance (€)"].iloc[
         params.nb_echeances_differe :].loc[lambda x: x > 0]).empty else 0.0),
@@ -1023,7 +1028,7 @@ elif echeance_banque and rang <= params.nb_echeances_differe + 1 < params.nb_ech
         f"⚠️ L'échéance saisie ({euros(echeance_banque)}) rembourse tout le capital dès la 1re échéance : vérifiez "
         "le montant (échéance d'une période, assurance comprise)."
     )
-if params.echeance_imposee and resultat.echeance_constante and (params.assurance_mensuelle or params.assurance_taux_crd):
+if params.echeance_imposee and resultat.echeance_constante and (params.assurance_mensuelle or params.assurance_taux_crd or params.assurance_taux_capital):
     st.caption(
         f"Échéance hors assurance déduite de l'échéance saisie ({euros(params.echeance_imposee)}) : "
         f"{euros(resultat.echeance_constante)}."

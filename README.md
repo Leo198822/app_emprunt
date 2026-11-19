@@ -173,6 +173,8 @@ Règles déduites du grand livre d'un prêt Crédit Agricole à déblocages succ
   message indique le nombre d'échéances au lieu de celui prévu. Les autres frais sont répartis sur les
   échéances restantes. Seul un déblocage partiel avec l'échéance du prêt complet garde des échéances à 0.
 - Assurance, au choix :
+  - *% du capital emprunté* : taux annuel appliqué au montant emprunté, même montant à chaque échéance
+    (ex. 53 700 € × 0,56 % / 12 = 25,06 €) : l'échéance totale reste constante (cas le plus courant) ;
   - *montant fixe* : coût mensuel saisi, multiplié par le nombre de mois de la période (× 3 en
     trimestriel…), prélevé à chaque échéance jusqu'au terme du prêt, y compris après le solde du capital ;
   - *% du capital restant dû* : taux annuel appliqué au capital restant dû en début de période

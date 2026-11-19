@@ -92,6 +92,7 @@ class ParametresPret:
     interets_jours_exacts: bool = False  # amortissement : taux / 12 (banque) ; True : jours exacts / 365
     assurance_mensuelle: float = 0.0  # montant fixe : coût mensuel de l'assurance, jusqu'au terme du prêt
     assurance_taux_crd: float = 0.0  # ou taux annuel (%) appliqué au capital restant dû en début de période
+    assurance_taux_capital: float = 0.0  # ou taux annuel (%) appliqué au capital emprunté : montant constant
     autres_frais: float = 0.0
     autres_frais_en_pourcentage: bool = False  # True : % du capital ; False : montant total
     remboursements_anticipes: list[RemboursementAnticipe] = field(default_factory=list)
@@ -164,7 +165,10 @@ class ParametresPret:
         return round(self.assurance_mensuelle * self.mois_par_periode, 2)
 
     def assurance_sur(self, capital_restant_du: float) -> float:
-        """Assurance d'une échéance : taux sur le capital restant dû, ou montant fixe."""
+        """Assurance d'une échéance : taux sur le capital emprunté (constante), taux sur le capital restant dû
+        (décroissante), ou montant fixe."""
+        if self.assurance_taux_capital:
+            return round(self.capital * self.assurance_taux_capital / 100 * self.mois_par_periode / 12, 2)
         if self.assurance_taux_crd:
             return round(max(capital_restant_du, 0.0) * self.assurance_taux_crd / 100 * self.mois_par_periode / 12, 2)
         return self.assurance_par_echeance
@@ -177,7 +181,8 @@ class ParametresPret:
 
     @property
     def taux_assurance(self) -> float:
-        return self.assurance_taux_crd  # 0 pour un montant fixe : seul le montant total figure en en-tête
+        # 0 pour un montant fixe : seul le montant total figure en en-tête.
+        return self.assurance_taux_capital or self.assurance_taux_crd
 
     @property
     def pourcentage_autres_frais(self) -> float:
