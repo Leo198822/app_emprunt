@@ -934,3 +934,17 @@ def test_assurance_sur_capital_emprunte_echeance_constante():
     assert (e["Assurance (€)"] == 25.06).all()
     assert (e["Échéance (€)"].iloc[:-1] == 1_058.74).all() and abs(e["Échéance (€)"].iloc[-1] - 1_058.74) < 0.5
     assert e["Solde (€)"].iloc[-1] == 0 and p.taux_assurance == 0.56
+
+
+def test_assurance_sur_capital_restant_du_echeance_totale_constante():
+    """Échéances constantes, assurance 0,56 % du capital restant dû : l'échéance totale (assurance comprise) ne varie
+    pas ; l'assurance baisse et le capital remboursé augmente d'autant."""
+    p = ParametresPret(capital=53_700, taux=5.82, nb_echeances=60, date_premier_paiement=date(2026, 11, 25),
+                       jour_prelevement=25, deblocages=[Deblocage(date(2026, 10, 25), 53_700)], assurance_taux_crd=0.56)
+    e = calculer_echeancier(p)
+    assert (e["Échéance (€)"].iloc[:-1] == 1_047.69).all() and abs(e["Échéance (€)"].iloc[-1] - 1_047.69) < 0.5
+    assert e["Assurance (€)"].iloc[0] == 25.06 and e["Assurance (€)"].iloc[-1] < 1
+    assert e["Solde (€)"].iloc[-1] == 0
+    # L'échéance de la banque saisie (assurance comprise) donne le même échéancier.
+    e2 = calculer_echeancier(replace(p, echeance_imposee=1_047.69, echeance_assurance_comprise=True))
+    assert (e2["Échéance (€)"] == e["Échéance (€)"]).all()

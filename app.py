@@ -311,7 +311,8 @@ with st.expander("Options (assurance, frais, calcul des intérêts)"):
                 "0,56 % / 12 = 25,06 € par mois), et l'échéance totale reste constante. C'est le cas le plus courant."
                 if assurance_sur_capital
                 else "Taux annuel appliqué au capital restant dû en début de chaque période : l'assurance diminue au fil "
-                "des remboursements et s'arrête quand le capital est soldé (l'échéance totale diminue aussi)."
+                "des remboursements et s'arrête quand le capital est soldé. En échéances constantes, l'échéance totale "
+                "(assurance comprise) reste la même : le capital remboursé augmente à mesure que l'assurance baisse."
                 if assurance_en_taux
                 else "Montant prélevé chaque mois. En périodicité trimestrielle, semestrielle ou annuelle, il est multiplié "
                 "par le nombre de mois de la période. L'assurance court jusqu'au terme du prêt."
@@ -1028,7 +1029,8 @@ elif echeance_banque and rang <= params.nb_echeances_differe + 1 < params.nb_ech
         f"⚠️ L'échéance saisie ({euros(echeance_banque)}) rembourse tout le capital dès la 1re échéance : vérifiez "
         "le montant (échéance d'une période, assurance comprise)."
     )
-if params.echeance_imposee and resultat.echeance_constante and (params.assurance_mensuelle or params.assurance_taux_crd or params.assurance_taux_capital):
+if params.echeance_imposee and resultat.echeance_constante and (params.assurance_mensuelle or params.assurance_taux_capital):
+    # (Assurance sur le capital restant dû : elle est comprise dans l'échéance constante saisie, rien à déduire.)
     st.caption(
         f"Échéance hors assurance déduite de l'échéance saisie ({euros(params.echeance_imposee)}) : "
         f"{euros(resultat.echeance_constante)}."

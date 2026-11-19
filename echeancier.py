@@ -374,6 +374,11 @@ class Anticipes:
     allonge: bool = True  # suspension : durée allongée (True) ou échéance recalculée à la reprise (False)
     echeance_reprise: float | None = None  # échéance imposée après le dernier montant constaté ou corrigé
     reprise: int | None = None  # échéance du capital restant dû imposé (ajustement), après laquelle on recalcule
+    assurance: float = 0.0  # taux périodique de l'assurance sur le capital restant dû, comprise dans l'échéance
+    # constante : l'échéance totale (intérêts + assurance + capital) ne varie pas, le capital absorbe la baisse
+
+    def assurance_sur(self, restant: float) -> float:
+        return round(max(restant, 0.0) * self.assurance, 2) if self.assurance else 0.0
 
     def suspendre(self, k: int, interet: float) -> float | None:
         """Amortissement d'une échéance suspendue : 0 (capital seul, intérêts payés) ou intérêts ajoutés au
@@ -472,14 +477,16 @@ def tableau_constant(
         if suspendu is not None:
             a = suspendu  # échéance suspendue : pas de capital remboursé
         else:
+            assurance = anticipes.assurance_sur(restant)
             if k == n - 1:
                 a = restant
                 # Écart d'arrondi : la dernière échéance reste égale aux autres (jamais d'intérêts sur un prêt sans
                 # intérêt).
-                if interet > 0 and abs(round(echeance - a, 2) - interet) <= 0.02 and round(echeance - a, 2) >= 0:
-                    interet = round(echeance - a, 2)
+                reste = round(echeance - a - assurance, 2)
+                if interet > 0 and abs(reste - interet) <= 0.02 and reste >= 0:
+                    interet = reste
             else:
-                a = min(max(round(echeance - interet, 2), 0.0), restant)
+                a = min(max(round(echeance - interet - assurance, 2), 0.0), restant)
             a = anticipes.amortissement(k, a, restant, interet)
             a = round(a + anticipes.appliquer(k, a, restant), 2)
         lignes.append((interet, a))
@@ -539,14 +546,15 @@ def tableau_proratise(
         elif reste_a_verser > 0.005 or non_verse(p, debut) > 0.005:
             # Période touchée par des fonds non encore versés : échéance et intérêts au prorata.
             interet = interet_reel(p, restant, debut, fin, facteur)
-            a = min(max(round(round(echeance * (base - reste_a_verser) / base, 2) - interet, 2), 0.0), restant)
+            assurance = anticipes.assurance_sur(restant - non_verse(p, debut))  # sur le capital réellement versé
+            a = min(max(round(round(echeance * (base - reste_a_verser) / base, 2) - interet - assurance, 2), 0.0), restant)
         else:
             if echeance_finale is None:
                 # Durée allongée : les échéances suspendues à venir ne remboursent pas de capital.
                 a_venir = sum(1 for j in anticipes.suspendues if j >= k) if anticipes.allonge else 0
-                echeance_finale = echeance_pour(restant, p.taux_periodique, n - k - a_venir)
+                echeance_finale = echeance_pour(restant, anticipes.t or p.taux_periodique, n - k - a_venir)
             interet = round(restant * facteur, 2)
-            a = min(max(round(echeance_finale - interet, 2), 0.0), restant)
+            a = min(max(round(echeance_finale - interet - anticipes.assurance_sur(restant), 2), 0.0), restant)
         interet = anticipes.interet(k, interet)
         a = anticipes.amortissement(k, a, restant, interet)
         a = round(a + anticipes.appliquer(k, a, restant), 2)
@@ -587,20 +595,23 @@ def echeance_pour(base: float, t: float, n: int) -> float:
     return round(base / n if t == 0 else base * t / (1 - (1 + t) ** -n), 2)
 
 
-def calibrer_base(echeance: float, t: float, facteurs: list[float], constates: list[float]) -> float:
+def calibrer_base(
+    echeance: float, t: float, facteurs: list[float], constates: list[float], assurance: float = 0.0
+) -> float:
     """Capital amorti correspondant à une échéance connue.
 
     Sans données comptables : valeur actuelle des échéances. Avec les remboursements de capital du
     grand livre : milieu de la plage de capitaux (au centime) qui les reproduit exactement.
     """
-    n = len(facteurs)
+    n, t = len(facteurs), t + assurance  # assurance sur le capital restant dû comprise dans l'échéance
     base = round(echeance * n if t == 0 else echeance * (1 - (1 + t) ** -n) / t, 2)
     if not constates:
         return base
     compatibles = [
         c / 100
         for c in range(round(base * 100) - 1000, round(base * 100) + 1000)
-        if [a for _, a in tableau_constant(c / 100, echeance, facteurs)[: len(constates)]] == constates
+        if [a for _, a in tableau_constant(c / 100, echeance, facteurs, Anticipes(assurance=assurance))[: len(constates)]]
+        == constates
     ]
     return compatibles[len(compatibles) // 2] if compatibles else base
 
@@ -707,11 +718,17 @@ def calculer(p: ParametresPret) -> Resultat:
             # Fonds versés après le début du remboursement : les intérêts ne portent que sur les fonds versés.
             lignes_amort = interets_sur_fonds_verses(p, dates, base, lignes_amort, facteurs, anticipes)
     else:
+        # Assurance sur le capital restant dû : comprise dans l'échéance constante, qui ne varie donc pas (le
+        # capital remboursé augmente à mesure que l'assurance baisse).
+        ta = p.assurance_taux_crd / 100 * p.mois_par_periode / 12 if p.assurance_taux_crd else 0.0
+        anticipes.assurance, anticipes.t = ta, t + ta
         if p.echeance_imposee:
             echeance = round(p.echeance_imposee, 2)
-            if p.echeance_assurance_comprise:
+            if p.echeance_assurance_comprise and not ta:
                 # Échéance saisie assurance comprise : on retire l'assurance de la 1re échéance d'amortissement.
                 echeance = round(echeance - p.assurance_sur(base), 2)
+            elif ta and not p.echeance_assurance_comprise:
+                echeance = round(echeance + p.assurance_sur(base), 2)
             if (
                 plafond and p.interets_capitalises_imposes is None and not p.partiel and not p.capital_impose
                 and not p.echeances_constatees
@@ -719,14 +736,14 @@ def calculer(p: ParametresPret) -> Resultat:
             ):
                 # Différé capitalisé : l'échéance de la banque fixe le capital amorti, donc les intérêts
                 # capitalisés — retenus seulement s'ils restent vraisemblables (entre 0 et le plafond).
-                calibre = calibrer_base(echeance, t, facteurs[:n_offre], p.remboursements_constates)
+                calibre = calibrer_base(echeance, t, facteurs[:n_offre], p.remboursements_constates, ta)
                 if p.capital_effectif <= calibre <= p.capital_effectif + plafond:
                     base, capitalises = calibre, round(calibre - p.capital_effectif, 2)
         elif p.partiel and p.partiel_duree_reduite:
             # Échéance du prêt complet appliquée au montant débloqué : le remboursement s'arrête plus tôt.
-            echeance = echeance_pour(round(p.capital + capitalises, 2), t, n_offre)
+            echeance = echeance_pour(round(p.capital + capitalises, 2), t + ta, n_offre)
         else:
-            echeance = echeance_pour(base, t, n_offre)
+            echeance = echeance_pour(base, t + ta, n_offre)
         if proratise:
             lignes_amort = tableau_proratise(p, dates, base, echeance, facteurs, anticipes)
         else:

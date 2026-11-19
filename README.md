@@ -178,7 +178,9 @@ Règles déduites du grand livre d'un prêt Crédit Agricole à déblocages succ
   - *montant fixe* : coût mensuel saisi, multiplié par le nombre de mois de la période (× 3 en
     trimestriel…), prélevé à chaque échéance jusqu'au terme du prêt, y compris après le solde du capital ;
   - *% du capital restant dû* : taux annuel appliqué au capital restant dû en début de période
-    (× nombre de mois / 12) ; l'assurance diminue avec le capital et s'arrête quand il est soldé.
+    (× nombre de mois / 12) ; l'assurance diminue avec le capital et s'arrête quand il est soldé. En échéances
+    constantes, l'échéance totale (capital + intérêts + assurance) reste la même : le capital remboursé augmente
+    à mesure que l'assurance baisse.
 - Autres frais : répartis également sur toutes les échéances.
 
 ## Saisie dans les tableaux
