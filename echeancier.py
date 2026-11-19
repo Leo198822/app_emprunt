@@ -377,8 +377,13 @@ class Anticipes:
     assurance: float = 0.0  # taux périodique de l'assurance sur le capital restant dû, comprise dans l'échéance
     # constante : l'échéance totale (intérêts + assurance + capital) ne varie pas, le capital absorbe la baisse
 
-    def assurance_sur(self, restant: float) -> float:
-        return round(max(restant, 0.0) * self.assurance, 2) if self.assurance else 0.0
+    non_verses: dict[int, float] = field(default_factory=dict)  # fonds pas encore versés au début de l'échéance k
+
+    def assurance_sur(self, restant: float, k: int | None = None) -> float:
+        """Assurance comprise dans l'échéance k : sur le capital réellement versé restant dû en début de période."""
+        if not self.assurance:
+            return 0.0
+        return round(max(restant - self.non_verses.get(k, 0.0), 0.0) * self.assurance, 2)
 
     def suspendre(self, k: int, interet: float) -> float | None:
         """Amortissement d'une échéance suspendue : 0 (capital seul, intérêts payés) ou intérêts ajoutés au
@@ -477,7 +482,7 @@ def tableau_constant(
         if suspendu is not None:
             a = suspendu  # échéance suspendue : pas de capital remboursé
         else:
-            assurance = anticipes.assurance_sur(restant)
+            assurance = anticipes.assurance_sur(restant, k)
             if k == n - 1:
                 a = restant
                 # Écart d'arrondi : la dernière échéance reste égale aux autres (jamais d'intérêts sur un prêt sans
@@ -554,7 +559,7 @@ def tableau_proratise(
                 a_venir = sum(1 for j in anticipes.suspendues if j >= k) if anticipes.allonge else 0
                 echeance_finale = echeance_pour(restant, anticipes.t or p.taux_periodique, n - k - a_venir)
             interet = round(restant * facteur, 2)
-            a = min(max(round(echeance_finale - interet - anticipes.assurance_sur(restant), 2), 0.0), restant)
+            a = min(max(round(echeance_finale - interet - anticipes.assurance_sur(restant, k), 2), 0.0), restant)
         interet = anticipes.interet(k, interet)
         a = anticipes.amortissement(k, a, restant, interet)
         a = round(a + anticipes.appliquer(k, a, restant), 2)
@@ -722,6 +727,9 @@ def calculer(p: ParametresPret) -> Resultat:
         # capital remboursé augmente à mesure que l'assurance baisse).
         ta = p.assurance_taux_crd / 100 * p.mois_par_periode / 12 if p.assurance_taux_crd else 0.0
         anticipes.assurance, anticipes.t = ta, t + ta
+        if ta and p.deblocages:  # fonds pas encore versés en début de chaque échéance d'amortissement
+            debuts = [dates[k0 - 1] if k0 else ajouter_mois(dates[0], -p.mois_par_periode, p.jour_prelevement)] + dates[k0:-1]
+            anticipes.non_verses = {k: non_verse(p, d) for k, d in enumerate(debuts) if non_verse(p, d) > 0.005}
         if p.echeance_imposee:
             echeance = round(p.echeance_imposee, 2)
             if p.echeance_assurance_comprise and not ta:
